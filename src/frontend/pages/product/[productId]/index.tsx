@@ -17,6 +17,7 @@ import ApiGateway from '../../../gateways/Api.gateway';
 import { Product } from '../../../protos/demo';
 import AdProvider from '../../../providers/Ad.provider';
 import { useCart } from '../../../providers/Cart.provider';
+import { getProductImageUrl } from '../../../utils/imageUrl';
 import * as S from '../../../styles/ProductDetail.styled';
 import { useCurrency } from '../../../providers/Currency.provider';
 
@@ -72,7 +73,7 @@ const ProductDetail: NextPage = () => {
           <S.Container>
             {picture ? (
               <S.Image
-                $src={`/images/products/${picture}`}
+                $src={getProductImageUrl(picture)}
                 data-cy={CypressFields.ProductPicture}
               />
             ) : null}

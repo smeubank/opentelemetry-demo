@@ -30,6 +30,7 @@
     <PackageReference Include="OpenTelemetry.Resources.Container" />
     <PackageReference Include="OpenTelemetry.Resources.Host" />
     <PackageReference Include="StackExchange.Redis" />
+    <PackageReference Include="Sentry.AspNetCore" />
     <PackageReference Include="OpenFeature.Providers.Flagd" />
     <PackageReference Include="OpenFeature" />
     <PackageReference Include="OpenFeature.Hosting" />

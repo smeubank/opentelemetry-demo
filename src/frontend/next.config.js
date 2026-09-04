@@ -6,6 +6,7 @@
 const dotEnv = require('dotenv');
 const dotenvExpand = require('dotenv-expand');
 const { resolve } = require('path');
+const { withSentryConfig } = require('@sentry/nextjs');
 
 const myEnv = dotEnv.config({
   path: resolve(__dirname, '../../.env'),
@@ -69,4 +70,14 @@ const nextConfig = {
   }
 };
 
-module.exports = nextConfig;
+// Sentry is additive and opt-in: with a blank DSN the injected SDK no-ops. Source-map
+// upload only runs when SENTRY_AUTH_TOKEN is present, so default builds are unaffected.
+module.exports = withSentryConfig(nextConfig, {
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  widenClientFileUpload: true,
+  tunnelRoute: '/monitoring',
+  silent: !process.env.CI,
+  sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN },
+});

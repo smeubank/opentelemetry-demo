@@ -20,6 +20,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry.Instrumentation.StackExchangeRedis;
+using Sentry.AspNetCore;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -36,6 +37,14 @@ if (string.IsNullOrEmpty(valkeyAddress))
     Console.WriteLine("VALKEY_ADDR environment variable is required.");
     Environment.Exit(1);
 }
+
+// Sentry reads SENTRY_DSN / SENTRY_ENVIRONMENT / SENTRY_RELEASE from the
+// environment. A blank/absent DSN disables Sentry. Tracing is owned by
+// OpenTelemetry, so Sentry tracing is disabled here.
+builder.WebHost.UseSentry(options =>
+{
+    options.TracesSampleRate = 0;
+});
 
 builder.Logging
     .AddOpenTelemetry(options => options.AddOtlpExporter())

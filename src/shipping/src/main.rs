@@ -16,6 +16,12 @@ use shipping_service::{get_quote, ship_order};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    let _sentry = sentry::init(sentry::ClientOptions {
+        release: sentry::release_name!(),
+        traces_sample_rate: 0.0,
+        ..Default::default()
+    });
+
     let otel_guard = match init_otel() {
         Ok(guard) => {
             info!("Successfully configured OTel");

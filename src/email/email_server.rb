@@ -15,6 +15,14 @@ require "opentelemetry-exporter-otlp-logs"
 require "opentelemetry-exporter-otlp-metrics"
 require "opentelemetry/instrumentation/sinatra"
 
+require "sentry-ruby"
+
+# Errors/logs only; OpenTelemetry owns tracing so Sentry tracing stays off.
+# A blank or absent SENTRY_DSN makes Sentry.init a no-op.
+Sentry.init do |config|
+  config.traces_sample_rate = 0.0
+end
+
 set :port, ENV["EMAIL_PORT"]
 
 # Initialize OpenFeature SDK with flagd provider

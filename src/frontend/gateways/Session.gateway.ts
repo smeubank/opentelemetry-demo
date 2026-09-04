@@ -6,6 +6,9 @@ import { v4 } from 'uuid';
 interface ISession {
   userId: string;
   currencyCode: string;
+  // Present when the user is signed in via Supabase Auth; absent for anonymous sessions.
+  email?: string;
+  isAuthenticated?: boolean;
 }
 
 const sessionKey = 'session';
@@ -36,6 +39,22 @@ const SessionGateway = () => ({
     const session = this.getSession();
 
     localStorage.setItem(sessionKey, JSON.stringify({ ...session, [key]: value }));
+  },
+  // Map a signed-in Supabase user onto the session so their id flows into cart/checkout.
+  promoteToUser(userId: string, email?: string) {
+    const session = this.getSession();
+    localStorage.setItem(
+      sessionKey,
+      JSON.stringify({ ...session, userId, email, isAuthenticated: true })
+    );
+  },
+  // Revert to a fresh anonymous identity on sign-out (new cart, keep currency).
+  demoteToAnonymous() {
+    const session = this.getSession();
+    localStorage.setItem(
+      sessionKey,
+      JSON.stringify({ userId: v4(), currencyCode: session.currencyCode })
+    );
   },
 });
 

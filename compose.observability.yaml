@@ -77,6 +77,8 @@ services:
       - --enable-feature=exemplar-storage
     volumes:
       - ./src/prometheus/prometheus-config.yaml:/etc/prometheus/prometheus-config.yaml
+      # Opt-in scrape includes (e.g. Supabase privileged metrics). Empty by default.
+      - ./src/prometheus/supabase:/etc/prometheus/supabase
     deploy:
       resources:
         limits:
@@ -194,6 +196,9 @@ services:
       - ${OTEL_COLLECTOR_CONFIG_EXTRAS}:/etc/otelcol-config-extras.yml
     environment:
       - KAFKA_ADDR
+      # Opt-in Sentry OTLP trace export (used only when the extras layer is the Sentry config).
+      - SENTRY_OTLP_ENDPOINT
+      - SENTRY_OTLP_PUBLIC_KEY
     depends_on:
       jaeger:
         condition: service_started

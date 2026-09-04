@@ -25,6 +25,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/IBM/sarama"
+	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
 	otelhooks "github.com/open-feature/go-sdk-contrib/hooks/open-telemetry/pkg"
 	flagd "github.com/open-feature/go-sdk-contrib/providers/flagd/pkg"
@@ -162,6 +163,16 @@ func main() {
 	var port string
 	mustMapEnv(&port, "CHECKOUT_PORT")
 
+	// Initialize Sentry for error reporting. DSN, environment and release are
+	// read from the SENTRY_* environment variables. Tracing is intentionally
+	// disabled because OpenTelemetry owns tracing in this service. An empty DSN
+	// disables Sentry, so a missing DSN is not fatal.
+	if err := sentry.Init(sentry.ClientOptions{EnableTracing: false}); err != nil {
+		slog.Error(fmt.Sprintf("sentry.Init failed: %v", err))
+	} else {
+		defer sentry.Flush(2 * time.Second)
+	}
+
 	tp := initTracerProvider()
 	defer func() {
 		if err := tp.Shutdown(context.Background()); err != nil {
@@ -276,6 +287,7 @@ func main() {
 	defer cancel()
 
 	go func() {
+		defer sentry.CurrentHub().Recover(nil)
 		if err := srv.Serve(lis); err != nil {
 			logger.Error(err.Error())
 		}

@@ -7,6 +7,7 @@ import ProductPrice from '../ProductPrice';
 import * as S from './ProductCard.styled';
 import { useState, useEffect } from 'react';
 import { useNumberFlagValue } from '@openfeature/react-sdk';
+import { getProductImageUrl, isSupabaseStorageEnabled } from '../../utils/imageUrl';
 
 interface IProps {
   product: Product;
@@ -40,15 +41,20 @@ const ProductCard = ({
     const controller = new AbortController();
     let objectUrl: string | null = null;
     let cancelled = false;
+    const usingStorage = isSupabaseStorageEnabled();
     const headers = new Headers();
-    headers.append('x-envoy-fault-delay-request', imageSlowLoad.toString());
-    headers.append('Cache-Control', 'no-cache');
+    // The envoy fault-delay header only applies to the bundled image-provider path.
+    // Skip it for Supabase Storage to avoid an unnecessary cross-origin preflight.
+    if (!usingStorage) {
+      headers.append('x-envoy-fault-delay-request', imageSlowLoad.toString());
+      headers.append('Cache-Control', 'no-cache');
+    }
     const requestInit = {
       method: 'GET',
       headers: headers,
       signal: controller.signal,
     };
-    const imageUrl = '/images/products/' + picture;
+    const imageUrl = getProductImageUrl(picture);
     const requestInfo = new Request(imageUrl, requestInit);
     getImageWithHeaders(requestInfo)
       .then(blob => {

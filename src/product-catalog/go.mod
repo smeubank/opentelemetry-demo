@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/XSAM/otelsql v0.43.0
+	github.com/getsentry/sentry-go v0.49.0
 	github.com/lib/pq v1.12.3
 	github.com/open-feature/go-sdk v1.18.0
 	github.com/open-feature/go-sdk-contrib/hooks/open-telemetry v0.3.7

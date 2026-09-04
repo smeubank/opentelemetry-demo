@@ -14,7 +14,7 @@ ADDLICENSE = $(TOOLS_DIR)/$(ADDLICENSE_BINARY)
 
 DOCKER_CMD ?= docker
 DOCKER_COMPOSE_CMD ?= docker compose
-DOCKER_COMPOSE_ENV=--env-file .env --env-file .env.override
+DOCKER_COMPOSE_ENV=--env-file .env --env-file .env.override $(if $(wildcard .env.local),--env-file .env.local,)
 
 # Compose file layers — combine with -f flags for the desired configuration:
 #   Core (minimal):             compose.yaml

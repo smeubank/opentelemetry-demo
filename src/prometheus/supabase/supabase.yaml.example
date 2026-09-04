@@ -1,0 +1,17 @@
+# Supabase privileged metrics scrape job (opt-in).
+# Copy to supabase.yaml (gitignored) and fill in your project ref + service_role key,
+# per https://supabase.com/docs/guides/observability/metrics/grafana-self-hosted.
+# This file is a Prometheus scrape_config_files include: a scrape_configs mapping.
+scrape_configs:
+  - job_name: supabase
+    scrape_interval: 60s
+    metrics_path: /customer/v1/privileged/metrics
+    scheme: https
+    basic_auth:
+      username: service_role
+      password: <SUPABASE_SERVICE_ROLE_KEY>
+    static_configs:
+      - targets:
+          - '<project-ref>.supabase.co:443'
+        labels:
+          project: '<project-ref>'

@@ -22,6 +22,12 @@ use Slim\Factory\AppFactory;
 
 require __DIR__ . '/../vendor/autoload.php';
 
+// Sentry handles errors and logs only. Tracing stays off so the existing
+// OpenTelemetry instrumentation remains the sole owner of tracing. The SDK
+// reads SENTRY_DSN/SENTRY_ENVIRONMENT/SENTRY_RELEASE from the environment; an
+// empty DSN makes init a no-op and disables Sentry.
+\Sentry\init(['traces_sample_rate' => 0]);
+
 // Instantiate PHP-DI ContainerBuilder
 $containerBuilder = new ContainerBuilder();
 

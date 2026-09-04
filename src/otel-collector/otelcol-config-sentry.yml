@@ -1,0 +1,25 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# Opt-in collector layer that forwards the existing OTLP traces to Sentry's OTLP endpoint,
+# in ADDITION to Jaeger. This keeps a single OpenTelemetry tracer (Sentry SDK tracing stays
+# OFF) while giving Sentry full distributed traces.
+#
+# Enable by pointing the extras config layer at this file in .env.local:
+#   OTEL_COLLECTOR_CONFIG_EXTRAS=./src/otel-collector/otelcol-config-sentry.yml
+# and setting SENTRY_OTLP_ENDPOINT + SENTRY_OTLP_PUBLIC_KEY.
+#
+# This file is loaded LAST, so the pipeline below REPLACES the traces exporter list. It repeats
+# the upstream exporters (otlp_grpc/jaeger, debug, span_metrics) so they stay active alongside Sentry.
+
+exporters:
+  otlp_http/sentry:
+    # Sentry OTLP ingest base; the exporter appends /v1/traces. Auth via the DSN public key.
+    endpoint: ${env:SENTRY_OTLP_ENDPOINT}
+    headers:
+      x-sentry-auth: "sentry sentry_key=${env:SENTRY_OTLP_PUBLIC_KEY}"
+
+service:
+  pipelines:
+    traces:
+      exporters: [otlp_grpc/jaeger, debug, span_metrics, otlp_http/sentry]

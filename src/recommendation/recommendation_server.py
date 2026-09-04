@@ -10,6 +10,7 @@ import random
 from concurrent import futures
 
 # Pip
+import sentry_sdk
 import grpc
 from opentelemetry import trace, metrics
 from opentelemetry._logs import set_logger_provider
@@ -127,6 +128,15 @@ def check_feature_flag(flag_name: str):
 
 
 if __name__ == "__main__":
+    # Initialize Sentry for errors and logs only. Tracing stays disabled so
+    # OpenTelemetry auto-instrumentation remains the sole owner of tracing.
+    # DSN, environment and release are read from SENTRY_* env vars; a blank or
+    # absent SENTRY_DSN makes init a no-op and the service runs normally.
+    try:
+        sentry_sdk.init(traces_sample_rate=0.0)
+    except Exception:
+        pass
+
     service_name = must_map_env('OTEL_SERVICE_NAME')
     api.set_provider(FlagdProvider(host=os.environ.get('FLAGD_HOST', 'flagd'), port=os.environ.get('FLAGD_PORT', 8013)))
     api.add_hooks([TracingHook()])

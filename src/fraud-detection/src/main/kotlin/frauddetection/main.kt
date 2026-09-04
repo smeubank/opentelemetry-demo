@@ -22,6 +22,7 @@ import dev.openfeature.sdk.EvaluationContext
 import dev.openfeature.sdk.ImmutableContext
 import dev.openfeature.sdk.Value
 import dev.openfeature.sdk.OpenFeatureAPI
+import io.sentry.Sentry
 
 val topic: String = System.getenv("KAFKA_TOPIC") ?: "orders"
 const val groupID = "fraud-detection"
@@ -29,6 +30,14 @@ const val groupID = "fraud-detection"
 private val logger: Logger = LogManager.getLogger(groupID)
 
 fun main() {
+    // Initialize the Sentry SDK for error/log reporting only. Tracing stays
+    // off because the OpenTelemetry Java agent owns tracing for this service.
+    // Sentry reads SENTRY_DSN, SENTRY_ENVIRONMENT and SENTRY_RELEASE from the
+    // environment; a blank/absent SENTRY_DSN makes Sentry a no-op.
+    Sentry.init { options ->
+        options.tracesSampleRate = 0.0
+    }
+
     val options = FlagdOptions.builder()
     .withGlobalTelemetry(true)
     .build()

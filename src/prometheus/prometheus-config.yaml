@@ -5,6 +5,12 @@ global:
   # Align Prometheus scrape interval with the OTel SDKs' export interval for consistency (see OTEL_METRIC_EXPORT_INTERVAL)
   scrape_interval: 60s
 
+# Opt-in scrape jobs live in gitignored include files (e.g. the Supabase privileged
+# metrics endpoint, which needs a secret). Absent by default, so the core demo is unaffected.
+# See src/prometheus/supabase/supabase.yaml.example.
+scrape_config_files:
+  - /etc/prometheus/supabase/*.yaml
+
 otlp:
   keep_identifying_resource_attributes: true
   promote_resource_attributes:

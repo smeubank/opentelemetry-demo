@@ -23,6 +23,7 @@ COPY ./pb/demo.proto demo.proto
 
 COPY ./src/payment/charge.js charge.js
 COPY ./src/payment/index.js index.js
+COPY ./src/payment/instrument.js instrument.js
 COPY ./src/payment/logger.js logger.js
 
 EXPOSE ${PAYMENT_PORT}

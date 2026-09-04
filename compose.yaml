@@ -57,6 +57,9 @@ services:
       - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES},service.criticality=medium
       - OTEL_LOGS_EXPORTER=otlp
       - OTEL_SERVICE_NAME=ad
+      - SENTRY_DSN
+      - SENTRY_ENVIRONMENT
+      - SENTRY_RELEASE
       # Opt in to experimental OTel SDK self-observability metrics (otel.sdk.*)
       # feeding the "self-observability" Grafana dashboard.
       - OTEL_EXPERIMENTAL_SDK_TELEMETRY_VERSION=latest
@@ -100,6 +103,9 @@ services:
       - OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE
       - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES},service.criticality=high
       - OTEL_SERVICE_NAME=cart
+      - SENTRY_DSN
+      - SENTRY_ENVIRONMENT
+      - SENTRY_RELEASE
       - ASPNETCORE_URLS=http://*:${CART_PORT}
     depends_on:
       valkey-cart:
@@ -142,6 +148,9 @@ services:
       - OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE
       - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES},service.criticality=critical
       - OTEL_SERVICE_NAME=checkout
+      - SENTRY_DSN
+      - SENTRY_ENVIRONMENT
+      - SENTRY_RELEASE
     healthcheck:
       test: ["CMD", "/bin/grpc_health_probe", "-addr=:${CHECKOUT_PORT}"]
       start_period: 10s
@@ -232,6 +241,9 @@ services:
       - OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE
       - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES},service.criticality=medium
       - OTEL_SERVICE_NAME=email
+      - SENTRY_DSN
+      - SENTRY_ENVIRONMENT
+      - SENTRY_RELEASE
     healthcheck:
       test: ["CMD", "ruby", "-e", "require 'socket'; TCPSocket.new('localhost', ${EMAIL_PORT}).close"]
       start_period: 10s
@@ -279,6 +291,14 @@ services:
       - OTEL_COLLECTOR_HOST
       - FLAGD_HOST
       - FLAGD_PORT
+      # Supabase + Sentry (opt-in; blank by default). Passed with NON-prefixed names so they are
+      # read at runtime and surfaced to the browser as NEXT_PUBLIC_* keys via window.ENV in _document.tsx.
+      - SUPABASE_URL
+      - SUPABASE_PUBLISHABLE_KEY
+      - SUPABASE_STORAGE_BASE_URL
+      - SENTRY_DSN
+      - SENTRY_ENVIRONMENT
+      - SENTRY_RELEASE
     healthcheck:
       test: ["CMD", "/nodejs/bin/node", "-e", "require('net').connect(${FRONTEND_PORT},require('os').hostname(),function(){process.exit(0)}).on('error',function(){process.exit(1)})"]
       start_period: 60s
@@ -483,6 +503,9 @@ services:
       - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
       - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES},service.criticality=critical
       - OTEL_SERVICE_NAME=payment
+      - SENTRY_DSN
+      - SENTRY_ENVIRONMENT
+      - SENTRY_RELEASE
     healthcheck:
       test:
         - "CMD"
@@ -530,9 +553,12 @@ services:
       - OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE
       - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES},service.criticality=high
       - OTEL_SERVICE_NAME=product-catalog
+      - SENTRY_DSN
+      - SENTRY_ENVIRONMENT
+      - SENTRY_RELEASE
       - OTEL_CONFIG_FILE=/otel-config.yml
       - OTEL_SEMCONV_STABILITY_OPT_IN=database
-      - DB_CONNECTION_STRING=postgres://astronomy_user:${POSTGRES_ASTRONOMY_PASSWORD}@${POSTGRES_HOST}/astronomy_db?sslmode=disable
+      - DB_CONNECTION_STRING=${PRODUCT_CATALOG_DB_CONNECTION_STRING}
     healthcheck:
       test: ["CMD", "/bin/grpc_health_probe", "-addr=:${PRODUCT_CATALOG_PORT}"]
       start_period: 10s
@@ -578,6 +604,9 @@ services:
       - OTEL_PHP_INTERNAL_METRICS_ENABLED=true
       - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES},service.criticality=low
       - OTEL_SERVICE_NAME=quote
+      - SENTRY_DSN
+      - SENTRY_ENVIRONMENT
+      - SENTRY_RELEASE
     healthcheck:
       test: ["CMD", "php", "-r", "fsockopen('localhost', ${QUOTE_PORT}) or die('fail');"]
       start_period: 10s
@@ -615,6 +644,9 @@ services:
       - OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE
       - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES},service.criticality=medium
       - OTEL_SERVICE_NAME=recommendation
+      - SENTRY_DSN
+      - SENTRY_ENVIRONMENT
+      - SENTRY_RELEASE
       - PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost ${RECOMMENDATION_PORT}"]
@@ -657,6 +689,9 @@ services:
       - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
       - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES},service.criticality=high
       - OTEL_SERVICE_NAME=shipping
+      - SENTRY_DSN
+      - SENTRY_ENVIRONMENT
+      - SENTRY_RELEASE
       - OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE
     healthcheck:
       test: ["CMD", "/app/healthcheck"]

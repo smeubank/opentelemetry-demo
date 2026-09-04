@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	_ "github.com/lib/pq"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -102,6 +103,16 @@ func initDatabase() error {
 func main() {
 	ctx := context.Background()
 
+	// Initialize Sentry for error reporting. DSN, environment and release are
+	// read from the SENTRY_* environment variables. Tracing is intentionally
+	// disabled because OpenTelemetry owns tracing in this service. An empty DSN
+	// disables Sentry, so a missing DSN is not fatal.
+	if err := sentry.Init(sentry.ClientOptions{EnableTracing: false}); err != nil {
+		logger.Error(fmt.Sprintf("sentry.Init failed: %v", err))
+	} else {
+		defer sentry.Flush(2 * time.Second)
+	}
+
 	// Initialize OpenTelemetry SDK with otelconf
 	sdk, err := otelconf.NewSDK(otelconf.WithContext(ctx))
 	if err != nil {
@@ -124,6 +135,8 @@ func main() {
 	// Initialize database connection
 	if err := initDatabase(); err != nil {
 		logger.Error(fmt.Sprintf("Error initializing database: %v", err))
+		sentry.CaptureException(err)
+		sentry.Flush(2 * time.Second)
 		os.Exit(1)
 	}
 	defer func() {
@@ -188,6 +201,7 @@ func main() {
 	defer cancel()
 
 	go func() {
+		defer sentry.CurrentHub().Recover(nil)
 		if err := srv.Serve(ln); err != nil {
 			logger.Error(fmt.Sprintf("Failed to serve gRPC server, err: %v", err))
 		}

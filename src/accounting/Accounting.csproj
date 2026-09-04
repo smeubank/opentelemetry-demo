@@ -20,6 +20,7 @@
 		<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" />
 		<PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
 		<PackageReference Include="OpenTelemetry.AutoInstrumentation" />
+		<PackageReference Include="Sentry" />
 	</ItemGroup>
 
 	<ItemGroup>

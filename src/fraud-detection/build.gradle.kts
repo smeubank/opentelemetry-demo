@@ -50,6 +50,7 @@ dependencies {
     implementation("com.google.protobuf:protobuf-kotlin:${protobufVersion}")
     implementation("dev.openfeature:sdk:1.22.1")
     implementation("dev.openfeature.contrib.providers:flagd:0.14.1")
+    implementation("io.sentry:sentry:8.16.0")
 
     if (JavaVersion.current().isJava9Compatible) {
         // Workaround for @javax.annotation.Generated

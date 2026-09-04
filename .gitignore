@@ -53,8 +53,23 @@ composer.lock
 # Otel Demo specific
 docker-compose.override.yml
 
+# Local secrets for Sentry + Supabase integration (never commit)
+.env.local
+.env.*.local
+.sentryclirc
+supabase/.temp/
+
 src/frontend/cypress/videos
 src/frontend/cypress/screenshots
 src/shipping/target/
 
 !src/currency/build
+
+# Supabase Prometheus scrape include (contains service_role key)
+src/prometheus/supabase/*.yaml
+!src/prometheus/supabase/*.yaml.example
+
+# Local MCP server config (contains project ref)
+.mcp.json
+
+*.tsbuildinfo

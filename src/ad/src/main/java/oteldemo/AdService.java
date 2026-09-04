@@ -27,6 +27,7 @@ import io.opentelemetry.instrumentation.annotations.SpanAttribute;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
 import io.prometheus.metrics.core.metrics.Counter;
 import io.prometheus.metrics.exporter.httpserver.HTTPServer;
+import io.sentry.Sentry;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -354,6 +355,15 @@ public final class AdService {
 
   /** Main launches the server from the command line. */
   public static void main(String[] args) throws IOException, InterruptedException {
+    // Initialize the Sentry SDK for error/log reporting only. Tracing stays
+    // off because the OpenTelemetry Java agent owns tracing for this service.
+    // Sentry reads SENTRY_DSN, SENTRY_ENVIRONMENT and SENTRY_RELEASE from the
+    // environment; a blank/absent SENTRY_DSN makes Sentry a no-op.
+    Sentry.init(
+        options -> {
+          options.setTracesSampleRate(0.0);
+        });
+
     // Start the RPC server. You shouldn't see any output from gRPC before this.
     logger.info("Ad service starting.");
     final AdService service = AdService.getInstance();

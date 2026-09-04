@@ -5,7 +5,21 @@ import Document, { DocumentContext, Html, Head, Main, NextScript } from 'next/do
 import { ServerStyleSheet } from 'styled-components';
 import {context, propagation} from "@opentelemetry/api";
 
-const { ENV_PLATFORM, WEB_OTEL_SERVICE_NAME, PUBLIC_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, OTEL_COLLECTOR_HOST} = process.env;
+// Read NON-prefixed names here: Next.js inlines process.env.NEXT_PUBLIC_* at build time
+// (when they are empty), whereas plain names are read at runtime from the container env.
+// These runtime values are surfaced to the browser as NEXT_PUBLIC_* keys on window.ENV below.
+const {
+  ENV_PLATFORM,
+  WEB_OTEL_SERVICE_NAME,
+  PUBLIC_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+  OTEL_COLLECTOR_HOST,
+  SUPABASE_URL = '',
+  SUPABASE_PUBLISHABLE_KEY = '',
+  SUPABASE_STORAGE_BASE_URL = '',
+  SENTRY_DSN = '',
+  SENTRY_ENVIRONMENT = '',
+  SENTRY_RELEASE = '',
+} = process.env;
 
 export default class MyDocument extends Document<{ envString: string }> {
   static async getInitialProps(ctx: DocumentContext) {
@@ -32,6 +46,12 @@ export default class MyDocument extends Document<{ envString: string }> {
           NEXT_PUBLIC_OTEL_SERVICE_NAME: '${WEB_OTEL_SERVICE_NAME}',
           NEXT_PUBLIC_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: '${otlpTracesEndpoint}',
           IS_SYNTHETIC_REQUEST: '${isSyntheticRequest}',
+          NEXT_PUBLIC_SUPABASE_URL: '${SUPABASE_URL}',
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: '${SUPABASE_PUBLISHABLE_KEY}',
+          NEXT_PUBLIC_SUPABASE_STORAGE_BASE_URL: '${SUPABASE_STORAGE_BASE_URL}',
+          NEXT_PUBLIC_SENTRY_DSN: '${SENTRY_DSN}',
+          NEXT_PUBLIC_SENTRY_ENVIRONMENT: '${SENTRY_ENVIRONMENT}',
+          NEXT_PUBLIC_SENTRY_RELEASE: '${SENTRY_RELEASE}',
         };`;
       return {
         ...initialProps,

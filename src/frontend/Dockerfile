@@ -23,6 +23,14 @@ COPY ./src/frontend/utils/enums/ utils/enums/
 COPY ./src/frontend/utils/telemetry/ utils/telemetry/
 COPY ./src/frontend/utils/imageLoader.js utils/imageLoader.js
 COPY ./src/frontend/utils/Request.ts utils/Request.ts
+COPY ./src/frontend/utils/supabase.ts utils/supabase.ts
+COPY ./src/frontend/utils/imageUrl.ts utils/imageUrl.ts
+
+# Sentry (@sentry/nextjs) config + Next.js instrumentation hooks
+COPY ./src/frontend/instrumentation.ts instrumentation.ts
+COPY ./src/frontend/instrumentation-client.ts instrumentation-client.ts
+COPY ./src/frontend/sentry.server.config.ts sentry.server.config.ts
+COPY ./src/frontend/sentry.edge.config.ts sentry.edge.config.ts
 
 COPY ./src/frontend/next.config.js next.config.js
 COPY ./src/frontend/tsconfig.json tsconfig.json
