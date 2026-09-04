@@ -463,6 +463,10 @@ services:
       - FLAGD_HOST
       - FLAGD_PORT
       - FLAGD_OFREP_PORT
+      - SUPABASE_DB_URL_SESSION
+      - SUPABASE_URL
+      - SUPABASE_PUBLISHABLE_KEY
+      - SUPABASE_ACCESS_TOKEN
     healthcheck:
       test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('localhost',${LOCUST_WEB_PORT}),2); s.close()"]
       start_period: 30s

@@ -106,6 +106,20 @@ Enabled by setting `NEXT_PUBLIC_SUPABASE_STORAGE_BASE_URL`. When unset, images f
 bundled `image-provider`. The bundled provider keeps running either way (it's part of the demo's
 Nginx telemetry), but product images point at Supabase when configured.
 
+### Redundant services when Supabase is on
+
+Two bundled services become redundant once Supabase is enabled (both left running today; candidates
+for a compose profile that skips them):
+
+- **`image-provider`** — with `SUPABASE_STORAGE_BASE_URL` set, product-detail images come from
+  Supabase Storage via `getProductImageUrl()` (`src/frontend/utils/imageUrl.ts`), but cart /
+  checkout / order components (`CartDropdown.tsx`, `CartItem.tsx`, `CheckoutItem.tsx`,
+  `pages/cart/checkout/[orderId]/index.tsx`) and the Locust Playwright task still hardcode
+  `/images/products/…` (routed by `src/frontend-proxy/envoy.tmpl.yaml` to `image-provider:8081`),
+  so both image sources run in parallel. To drop it: route those through `getProductImageUrl()`,
+  make the Playwright predicate Supabase-aware, and add a compose profile.
+- **`astronomy-db`** (bundled Postgres) — redundant when the Supabase connection strings are set.
+
 ## PostgREST
 
 Not used directly. `catalog.products` has an RLS `SELECT` policy for `anon`/`authenticated`, so

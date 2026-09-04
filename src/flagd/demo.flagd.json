@@ -93,6 +93,17 @@
         "on": 100
       }
     },
+    "supabaseConnectionExhaustion": {
+      "defaultVariant": "off",
+      "description": "[Supabase] Hold N idle Postgres connections to exhaust the connection limit. When a Management token is configured the load generator auto-raises the pooler pool_size above max_connections so real backends exhaust (and reverts on off). Combine with supabaseServiceErrors to cascade backend faults into auth/storage 5xx.",
+      "state": "ENABLED",
+      "variants": {
+        "high": 80,
+        "low": 20,
+        "medium": 45,
+        "off": 0
+      }
+    },
     "loadGeneratorFloodHomepage": {
       "defaultVariant": "off",
       "description": "Flood the frontend with a large amount of requests.",
@@ -100,6 +111,19 @@
       "variants": {
         "off": 0,
         "on": 100
+      }
+    },
+    "supabaseServiceErrors": {
+      "defaultVariant": "off",
+      "description": "[Supabase] Drive errors against a Supabase service to trigger its log_*_error_rate_high health check. data_api/edge_function return 5xx directly; auth/storage only 5xx when the DB is also exhausted (see supabaseConnectionExhaustion).",
+      "state": "ENABLED",
+      "variants": {
+        "all": 5,
+        "auth": 2,
+        "data_api": 1,
+        "edge_function": 4,
+        "off": 0,
+        "storage": 3
       }
     },
     "paymentFailure": {

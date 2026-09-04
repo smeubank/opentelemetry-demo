@@ -9,7 +9,7 @@ import random
 import uuid
 import logging
 
-from locust import HttpUser, task, between
+from locust import HttpUser, User, task, between
 from locust_plugins.users.playwright import PlaywrightUser, pw, PageWithRetry, event
 
 from opentelemetry import context, baggage, trace
@@ -274,3 +274,165 @@ async def add_baggage_header(route: Route, request: Request):
         'baggage': ', '.join(filter(None, (existing_baggage, 'synthetic_request=true')))
     }
     await route.continue_(headers=headers)
+
+
+# Opt-in: only spawned when a Supabase session-pooler URL is provided. Holds idle
+# Postgres connections to exhaust the project's connection limit on demand, driven by
+# the `supabaseConnectionExhaustion` flag, so the Supabase `db_connection_limit_reached`
+# health check fires while the shop UI visibly errors.
+database_exhaustion_url = os.environ.get("SUPABASE_DB_URL_SESSION", "").strip()
+
+if database_exhaustion_url:
+    import psycopg
+    import re
+    import requests as _requests
+
+    # When a Management API token is provided, the exhaustion user raises the pooler's
+    # default_pool_size above Postgres max_connections so held session clients actually exhaust
+    # the DATABASE (not just the pooler's small client cap), then reverts it when the flag is off.
+    # This makes the cascade fully flag-driven — no manual pool reconfiguration. Opt-in via
+    # SUPABASE_ACCESS_TOKEN; without it, exhaustion is capped at the pooler client limit (~15).
+    _mgmt_token = os.environ.get("SUPABASE_ACCESS_TOKEN", "").strip()
+    _ref_match = re.search(r"https://([a-z0-9]+)\.supabase\.", os.environ.get("SUPABASE_URL", ""))
+    _project_ref = _ref_match.group(1) if _ref_match else ""
+    _POOL_EXHAUST_SIZE = 90   # above max_connections (60) so real backends run out
+    _POOL_DEFAULT_SIZE = 15   # Supavisor default, restored when the flag goes off
+
+    class DatabaseExhaustionUser(User):
+        fixed_count = 1  # a single greenlet reconciles the whole connection pool
+        wait_time = between(2, 5)
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.tracer = trace.get_tracer(__name__)
+            self.held = []
+            self.pool_raised = False
+
+        def _set_pool_size(self, size):
+            if not (_mgmt_token and _project_ref):
+                return False  # auto-raise disabled -> pooler client cap (~15) applies
+            try:
+                r = _requests.patch(
+                    f"https://api.supabase.com/v1/projects/{_project_ref}/config/database/pooler",
+                    headers={"Authorization": f"Bearer {_mgmt_token}", "Content-Type": "application/json"},
+                    json={"default_pool_size": size}, timeout=15)
+                logging.info(f"pooler default_pool_size -> {size} (HTTP {r.status_code})")
+                return r.status_code < 300
+            except Exception as e:
+                logging.warning(f"failed to set pooler pool size: {e}")
+                return False
+
+        def _open_one(self):
+            with self.tracer.start_as_current_span("db_hold_connection") as span:
+                try:
+                    conn = psycopg.connect(database_exhaustion_url, autocommit=True, connect_timeout=5)
+                    conn.execute("SELECT 1")
+                    self.held.append(conn)
+                    span.set_attribute("demo.db.held_connections", len(self.held))
+                    return True
+                except psycopg.OperationalError as e:
+                    sqlstate = getattr(e, "sqlstate", None)
+                    message = str(e)
+                    span.set_attribute("demo.db.connection_error", message)
+                    # SQLSTATE 53300 = too_many_connections; the pooler may instead surface a
+                    # "too many"/"max clients" message, so match on both.
+                    if sqlstate == "53300" or "too many" in message.lower() or "max client" in message.lower():
+                        span.set_attribute("demo.db.connection_limit_reached", True)
+                        logging.error(f"Supabase connection limit reached while holding {len(self.held)} connections: {message}")
+                    else:
+                        logging.error(f"Failed to open Supabase connection: {message}")
+                    return False
+
+        def _release_one(self):
+            conn = self.held.pop()
+            try:
+                conn.close()
+            except Exception as e:
+                logging.warning(f"Error closing held connection: {e}")
+
+        def _release_all(self):
+            while self.held:
+                self._release_one()
+
+        @task
+        def reconcile_connections(self):
+            target = get_flagd_value("supabaseConnectionExhaustion")
+            # Raise the pooler pool above max_connections while exhausting, revert when off.
+            if target > 0 and not self.pool_raised:
+                if self._set_pool_size(_POOL_EXHAUST_SIZE):
+                    self.pool_raised = True
+            elif target == 0 and self.pool_raised:
+                self._set_pool_size(_POOL_DEFAULT_SIZE)
+                self.pool_raised = False
+            with self.tracer.start_as_current_span(
+                "db_exhaustion_reconcile",
+                context=context.get_current(),
+                attributes={"demo.db.target_connections": target, "demo.db.held_connections": len(self.held)},
+            ):
+                while len(self.held) > target:
+                    self._release_one()
+                while len(self.held) < target:
+                    if not self._open_one():
+                        break
+                logging.info(f"Holding {len(self.held)}/{target} Supabase connections")
+
+        def on_stop(self):
+            self._release_all()
+            if self.pool_raised:
+                self._set_pool_size(_POOL_DEFAULT_SIZE)
+                self.pool_raised = False
+
+
+# Opt-in: only spawned when Supabase HTTP creds are provided. Sends error-inducing requests to a
+# chosen Supabase service so its log_*_error_rate_high health check fires. The service is selected
+# by the supabaseServiceErrors flag (off/data_api/auth/storage/edge_function).
+supabase_http_url = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+supabase_apikey = os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip()
+
+if supabase_http_url and supabase_apikey:
+    import requests
+
+    _SERVICE_BY_FLAG = {1: "data_api", 2: "auth", 3: "storage", 4: "edge_function", 5: "all"}
+    _ALL_SERVICES = ["data_api", "auth", "storage", "edge_function"]
+
+    class SupabaseServiceErrorUser(User):
+        fixed_count = 2  # a couple of greenlets are enough to clear the >=50 req / 5-min window
+        wait_time = between(1, 2)
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.tracer = trace.get_tracer(__name__)
+            self.session = requests.Session()
+            self.session.headers.update({"apikey": supabase_apikey, "Authorization": f"Bearer {supabase_apikey}"})
+
+        def _hit(self, service):
+            # Each request is expected to produce a 5xx from the named Supabase service.
+            if service == "data_api":
+                return self.session.post(f"{supabase_http_url}/rest/v1/rpc/health_check_boom", json={}, timeout=10)
+            if service == "edge_function":
+                return self.session.post(f"{supabase_http_url}/functions/v1/health-check-error", json={}, timeout=10)
+            if service == "auth":
+                # best-effort: auth usually returns 4xx (not counted as 5xx) — see supademo-readme.md
+                return self.session.post(f"{supabase_http_url}/auth/v1/token?grant_type=password", json={"email": "x@x", "password": "x"}, timeout=10)
+            if service == "storage":
+                # best-effort: storage usually returns 4xx (not counted as 5xx) — see supademo-readme.md
+                return self.session.get(f"{supabase_http_url}/storage/v1/object/authenticated/nonexistent/nonexistent.txt", timeout=10)
+            return None
+
+        @task
+        def drive_errors(self):
+            selected = _SERVICE_BY_FLAG.get(get_flagd_value("supabaseServiceErrors"))
+            if not selected:
+                return
+            services = _ALL_SERVICES if selected == "all" else [selected]
+            for service in services:
+                with self.tracer.start_as_current_span("supabase_service_error", context=context.get_current(), attributes={"demo.supabase.service": service}):
+                    statuses = []
+                    for _ in range(3):
+                        try:
+                            r = self._hit(service)
+                            statuses.append(r.status_code if r is not None else 0)
+                        except Exception as e:
+                            statuses.append(-1)
+                            logging.warning(f"supabase {service} request error: {e}")
+                    logging.info(f"supabase {service} error-load statuses: {statuses}")
