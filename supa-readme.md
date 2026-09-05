@@ -164,10 +164,55 @@ build is unaffected.
 
 ## TODO
 
-- Supabase **log drains** → Sentry and/or OTLP→OpenSearch ([docs](https://supabase.com/docs/guides/observability/log-drains)).
+Remaining Supabase surfaces, ranked by whether they're actually worth doing.
+
+### Worth doing
+
+1. **Make RLS real.** The three `accounting` tables have RLS enabled but zero policies, and no
+   backend ever sees a Supabase JWT — the frontend maps `user.id` into localStorage and passes a
+   bare string to cart and checkout. Forward the access token and write ownership policies so Auth
+   enforces something instead of just labelling the session.
+2. **Read products through PostgREST.** `catalog.products` already has an `anon` read policy, so
+   the frontend can read it via `supabase-js` today. Cheapest way to make RLS demonstrable rather
+   than decorative. Pairs with #1.
+3. **Retire `image-provider` and `astronomy-db`.** Both are redundant once Supabase is on (see
+   Storage above). Route the remaining hardcoded `/images/products/…` callers through
+   `getProductImageUrl()`, make the Locust Playwright predicate Supabase-aware, add a compose
+   profile.
+4. **Log drains** → Sentry and/or OTLP→OpenSearch
+   ([docs](https://supabase.com/docs/guides/observability/log-drains)). Paid plan.
+
+### Worth a look
+
+5. **Cart off Valkey.** `ValkeyCartStore` already sits behind an `ICartStore` interface, so a
+   second implementation is a contained change, and carts are durable data users expect to survive.
+   Two ways to do it: hosted Postgres (one fewer container, though a worse fit than Redis for hot
+   cart reads), or [`@supabase/lite`](https://www.npmjs.com/package/@supabase/lite) as a sidecar in
+   place of `valkey-cart`. Lite is PostgREST + GoTrue compatible on SQLite, so the KV surface
+   becomes Supabase-shaped without requiring a hosted project, which keeps the zero-config default
+   intact. It's alpha, and the C# service would talk to it over PostgREST rather than the Redis
+   protocol.
+6. **Agent chat history in Postgres.** `src/agent` (opt-in via `compose.agent.yaml`) is stateless:
+   the browser re-posts the whole `history` array every turn and the server keeps nothing. A
+   LangGraph Postgres checkpointer makes chats survive a reload, which is a real user-facing
+   feature rather than plumbing, and it gives the agent a Supabase table it genuinely reads and
+   writes. Only pays off if the agent stack is part of the demo.
+7. **Realtime for order/shipping status.** The one Realtime use case here that isn't contrived.
+
+### Low value
+
+On the list deliberately, but none of these earn their cost today:
+
+- **Edge Functions for currency conversion.** Currency being the one C++ service is the point of it.
+- **flagd flags in Postgres.** Static JSON by design; a table plus a sync path buys no new insight.
+- **Kafka → pgmq.** Kafka is load-bearing teaching material in this demo.
+- **`recommendation` cache / `ad` map in Postgres.** In-memory by design. pgvector on
+  `recommendation` would be a new feature, not a migration.
+
+### Non-Supabase
+
 - Native **C++ currency** error capture in Sentry (its traces already reach Sentry via the collector; `sentry-native` would add crash/error events).
-- Explicit **Supabase client-side trace propagation** so supabase-js calls appear as spans in Jaeger.
-- Optional surfaces: **Realtime**, **Edge Functions**, reading products via **PostgREST**.
+- Explicit **client-side trace propagation** so supabase-js calls appear as spans in Jaeger.
 
 ---
 
