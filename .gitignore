@@ -73,3 +73,6 @@ src/prometheus/supabase/*.yaml
 .mcp.json
 
 *.tsbuildinfo
+
+# Track B eval drafts staged for the supabase/evals repo — not part of this PR
+evals-staging/

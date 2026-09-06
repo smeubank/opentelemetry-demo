@@ -42,7 +42,10 @@ make start                         # .env.local is loaded last and overrides .en
 5. For Sentry **traces** (optional), set `OTEL_COLLECTOR_CONFIG_EXTRAS` to
    `./src/otel-collector/otelcol-config-sentry.yml` plus `SENTRY_OTLP_ENDPOINT` /
    `SENTRY_OTLP_PUBLIC_KEY`.
-6. `make start`.
+6. For the **`payment-charge` edge function** (optional), apply `0003_transactions.sql`,
+   `supabase functions deploy payment-charge --no-verify-jwt`, `supabase secrets set SENTRY_DSN=…`,
+   and set `PAYMENT_EDGE_FN_URL`. Full runbook in `supademo-readme.md`.
+7. `make start`.
 
 ### Local URLs to check out
 
@@ -132,7 +135,25 @@ Not used yet. Candidate: live cart/inventory updates.
 
 ## Edge Functions
 
-Not used yet. Candidate: move a stateless service (e.g. currency conversion) to an Edge Function.
+**`payment-charge`** (`supabase/functions/payment-charge/index.ts`) is an opt-in Deno port of the
+Node `payment` service's charge path. When `PAYMENT_EDGE_FN_URL` is set, checkout calls it over HTTP
+(with the anon apikey) instead of gRPC to the local payment service; unset, the bare demo is
+unchanged. It:
+
+* validates the card (port of `src/payment/charge.js`) and persists each transaction to
+  `public.transactions` via `supabase-js` (migration `0003_transactions.sql`);
+* carries the **Sentry Deno SDK** (`@sentry/deno`, tracing off) and **continues the incoming W3C
+  `traceparent`** (converted to Sentry's `sentry-trace`) so a Sentry issue shares the demo's
+  `trace_id`. It also `console.log`s the `trace_id` — `function_edge_logs` does not parse
+  `traceparent` (unlike the gateway `edge_logs`), so this makes it queryable in `function_logs`;
+* can be made to fail via the **`supabasePaymentError`** flag — `invalid_token` (a blunt synthetic
+  failure) or `card_format` (a realistic regression: a too-strict parser rejects validly-formatted
+  dashed card numbers). Either yields a **failed checkout + Sentry issue + the
+  `log_edge_function_error_rate_high` health check**, all sharing one `trace_id`.
+
+Deploy: `supabase functions deploy payment-charge --no-verify-jwt`, set the `SENTRY_DSN` secret
+(`SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` are auto-injected), apply `0003`, then set
+`PAYMENT_EDGE_FN_URL`. Full runbook in `supademo-readme.md`.
 
 ## Observability (Sentry + Supabase metrics)
 
@@ -143,7 +164,7 @@ Not used yet. Candidate: move a stateless service (e.g. currency conversion) to 
 | Sentry — traces (all services) | `otel-collector` → `otelcol-config-sentry.yml` | Collector forwards OTLP traces to Sentry's OTLP endpoint (also covers C++ currency, which has no native SDK) |
 | Supabase infra metrics | `src/prometheus/supabase/`, Grafana "Supabase Project" dashboard | Prometheus scrapes the privileged metrics endpoint into the demo's own Grafana |
 | Supabase log drains | — | **TODO**: skipped for now (paid plan feature) |
-| Client-side trace propagation | frontend | Relies on the existing OTel fetch instrumentation; explicit config per Supabase's [client-side tracing guide](https://supabase.com/docs/guides/observability/client-side-tracing) is a **TODO** |
+| Client-side trace propagation | `src/frontend/utils/supabase.ts`; `payment-charge` edge fn | `supabase-js` `tracePropagation: true` + the `/tracing` import per Supabase's [guide](https://supabase.com/docs/guides/observability/client-side-tracing). Verified end-to-end: the demo `trace_id` reaches Supabase `edge_logs`/`function_logs` and matches Jaeger |
 
 **Sentry SDK tracing is OFF everywhere.** The SDKs handle only errors/logs/metrics/replay. There is
 a single OpenTelemetry tracer per service; the collector forks those OTLP traces to **both** Jaeger
@@ -203,7 +224,9 @@ Remaining Supabase surfaces, ranked by whether they're actually worth doing.
 
 On the list deliberately, but none of these earn their cost today:
 
-- **Edge Functions for currency conversion.** Currency being the one C++ service is the point of it.
+- **Edge Functions for currency conversion.** Edge Functions are now realized via the opt-in
+  `payment-charge` function (see above); currency specifically stays put — it's the one C++/gRPC
+  service, and that's the point of it.
 - **flagd flags in Postgres.** Static JSON by design; a table plus a sync path buys no new insight.
 - **Kafka → pgmq.** Kafka is load-bearing teaching material in this demo.
 - **`recommendation` cache / `ad` map in Postgres.** In-memory by design. pgvector on
@@ -212,7 +235,6 @@ On the list deliberately, but none of these earn their cost today:
 ### Non-Supabase
 
 - Native **C++ currency** error capture in Sentry (its traces already reach Sentry via the collector; `sentry-native` would add crash/error events).
-- Explicit **client-side trace propagation** so supabase-js calls appear as spans in Jaeger.
 
 ---
 

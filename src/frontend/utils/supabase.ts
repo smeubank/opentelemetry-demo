@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+// Enables W3C trace-context propagation (traceparent/tracestate/baggage) on
+// supabase-js requests so the demo's trace_id reaches Supabase logs. Requires
+// supabase-js >= 2.112.0. See https://supabase.com/docs/guides/observability/client-side-tracing
+import '@supabase/supabase-js/tracing';
 
 /**
  * Reads a NEXT_PUBLIC_* value from the runtime config. On the browser these are
@@ -32,6 +36,7 @@ export function getSupabase(): SupabaseClient | null {
   if (!client) {
     client = createClient(url, key, {
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+      tracePropagation: true,
     });
   }
   return client;

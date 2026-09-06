@@ -385,15 +385,15 @@ if database_exhaustion_url:
 
 # Opt-in: only spawned when Supabase HTTP creds are provided. Sends error-inducing requests to a
 # chosen Supabase service so its log_*_error_rate_high health check fires. The service is selected
-# by the supabaseServiceErrors flag (off/data_api/auth/storage/edge_function).
+# by the supabaseServiceErrors flag (off/auth/storage/edge_function/all).
 supabase_http_url = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
 supabase_apikey = os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip()
 
 if supabase_http_url and supabase_apikey:
     import requests
 
-    _SERVICE_BY_FLAG = {1: "data_api", 2: "auth", 3: "storage", 4: "edge_function", 5: "all"}
-    _ALL_SERVICES = ["data_api", "auth", "storage", "edge_function"]
+    _SERVICE_BY_FLAG = {2: "auth", 3: "storage", 4: "edge_function", 5: "all"}
+    _ALL_SERVICES = ["auth", "storage", "edge_function"]
 
     class SupabaseServiceErrorUser(User):
         fixed_count = 2  # a couple of greenlets are enough to clear the >=50 req / 5-min window
@@ -407,10 +407,10 @@ if supabase_http_url and supabase_apikey:
 
         def _hit(self, service):
             # Each request is expected to produce a 5xx from the named Supabase service.
-            if service == "data_api":
-                return self.session.post(f"{supabase_http_url}/rest/v1/rpc/health_check_boom", json={}, timeout=10)
             if service == "edge_function":
-                return self.session.post(f"{supabase_http_url}/functions/v1/health-check-error", json={}, timeout=10)
+                # Drives volume against the real payment-charge edge function so its
+                # log_edge_function_error_rate_high check fires; injectFailure forces a 500.
+                return self.session.post(f"{supabase_http_url}/functions/v1/payment-charge", json={"injectFailure": True}, timeout=10)
             if service == "auth":
                 # best-effort: auth usually returns 4xx (not counted as 5xx) — see supademo-readme.md
                 return self.session.post(f"{supabase_http_url}/auth/v1/token?grant_type=password", json={"email": "x@x", "password": "x"}, timeout=10)

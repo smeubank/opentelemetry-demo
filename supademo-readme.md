@@ -53,32 +53,57 @@ and read the check. Set the flag `off` and revert the pool size to recover.
 > `db_connection_limit_reached` **stays empty** — it's masked by `db_connection_failing` (below):
 > the probe fails TLS before it can measure the limit.
 
-## Trigger 2 — service 5xx (`log_*_error_rate_high`)
+## Trigger 2 — the `payment-charge` edge function (failed checkout + Sentry + health check)
 
-Drives 5xx against a chosen Supabase service so its per-service log check fires (needs a service
-returning 5xx for ≥10% of ≥50 requests across two consecutive 5-minute windows). The
-`SupabaseServiceErrorUser` reads `supabaseServiceErrors` (off/data_api/auth/storage/
-edge_function) and hammers that service. Needs `SUPABASE_URL` + `SUPABASE_PUBLISHABLE_KEY` (already
-in `.env.local`).
+The demo's payment charge path is available as an **opt-in Supabase Edge Function**
+(`supabase/functions/payment-charge/index.ts`, a Deno port of `src/payment/charge.js`). When
+`PAYMENT_EDGE_FN_URL` is set, checkout calls it over HTTP instead of gRPC to the local payment
+service; unset, the bare demo is unchanged. The function carries the Sentry Deno SDK, **continues
+the incoming W3C `traceparent`** (so its Sentry issue shares the demo's `trace_id`), and persists
+each transaction to `public.transactions` via supabase-js.
 
-**Deploy the two failing endpoints first** (the demo doesn't normally 5xx these services):
+The `supabasePaymentError` flag makes it fail — a **real failed checkout** that surfaces as three
+correlated signals sharing one `trace_id` (a Jaeger trace, a Sentry issue, and — under load — the
+`log_edge_function_error_rate_high` health check). Two modes:
+
+- **`invalid_token`** — a blunt synthetic failure ("Payment request failed. Invalid token.").
+- **`card_format`** — a *realistic regression*: a too-strict card parser that forgets to strip
+  separators, so the demo's validly-formatted dashed cards (`4432-8015-6152-0454`) are wrongly
+  rejected as "Credit card info is invalid." The better story for an observability-agent demo —
+  the cards are valid, so the agent has to find the parser bug. The failing card is attached to the
+  Sentry event for diagnosis.
+
+**Deploy first:**
 
 ```bash
-# Data API: PostgREST RPC that raises XX000 -> HTTP 500
-psql "$SUPABASE_DB_URL_DIRECT" -f supabase/migrations/0002_health_check_error_rpc.sql
-#   (or run the file in the SQL editor / via the Supabase MCP apply_migration)
+# 1. Transactions table (service role writes it; RLS on, no public policy)
+#    (SQL editor, or Supabase MCP apply_migration)
+psql "$SUPABASE_DB_URL_DIRECT" -f supabase/migrations/0003_transactions.sql
 
-# Edge Function: always returns HTTP 500
-supabase functions deploy health-check-error --no-verify-jwt --project-ref <ref>
-#   (source: supabase/functions/health-check-error/index.ts)
+# 2. The edge function (verify_jwt off so checkout/load-gen call it with the apikey)
+supabase functions deploy payment-charge --no-verify-jwt --project-ref <ref>
+
+# 3. Function secret. Supabase AUTO-INJECTS SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY into every
+#    edge function (used to write transactions), so only SENTRY_DSN needs setting — and it's
+#    optional (unset SENTRY_DSN = no Sentry, function still works).
+supabase secrets set SENTRY_DSN=<edge-function-dsn> --project-ref <ref>
 ```
 
-Then flip `supabaseServiceErrors` → `data_api` or `edge_function`, let it run ~11 min
-(two windows), and read `log_data_api_error_rate_high` / `log_edge_function_error_rate_high`.
+Then in `.env.local` set
+`PAYMENT_EDGE_FN_URL=https://<ref>.supabase.co/functions/v1/payment-charge`, `make redeploy
+service=checkout`, and place an order.
 
-- `data_api` and `edge_function` reliably produce 5xx → these checks fire.
-- `auth` and `storage` are wired too, but those services mostly return **4xx** (not counted), so
-  their checks likely won't fire — that's itself a finding (4xx ≠ 5xx).
+- **Failed-checkout demo:** flip `supabasePaymentError` → `card_format` (or `invalid_token`), place
+  an order → checkout returns `422 PAYMENT_FAILED` with the structured error in the UI; the same
+  `trace_id` appears in Jaeger, the Sentry issue, and Supabase `function_logs`
+  (`select event_message from logs where source='function_logs' and event_message like '%<trace_id>%'`
+  — note function invocations land in `function_logs`/`function_edge_logs`, not `edge_logs`).
+- **Health check volume:** `log_edge_function_error_rate_high` needs 5xx for ≥10% of ≥50 requests
+  across two 5-min windows — more than organic checkouts produce. Hold `supabaseServiceErrors` →
+  `edge_function` (or `all`) ~11 min; `SupabaseServiceErrorUser` hammers `payment-charge` with
+  `injectFailure` to trip it. Needs `SUPABASE_URL` + `SUPABASE_PUBLISHABLE_KEY` (already in `.env.local`).
+- `auth` and `storage` variants are wired too, but those services mostly return **4xx** (not
+  counted), so their checks likely won't fire — that's itself a finding (4xx ≠ 5xx).
 
 ## Health-check status observed on this project
 
@@ -86,8 +111,8 @@ Then flip `supabaseServiceErrors` → `data_api` or `edge_function`, let it run 
 |---|---|---|
 | 1 | `db_connection_limit_reached` | Reproduced real exhaustion (`53300`, even with pool auto-raised to 90) but **masked by #2's TLS failure → never fires**. |
 | 2 | `db_connection_failing` | **Fires — false positive** (`SELF_SIGNED_CERT_IN_CHAIN`, load-independent); also masks #1. |
-| 3 | `log_edge_function_error_rate_high` | ✅ **Fired** (all-mode, ~8 min) |
-| 4 | `log_data_api_error_rate_high` | ✅ **Fired** (~6–8 min) |
+| 3 | `log_edge_function_error_rate_high` | ✅ **Fired** (~8 min) — now driven by the `payment-charge` edge function. |
+| 4 | `log_data_api_error_rate_high` | Previously fired via a synthetic RPC (`health_check_boom`), now removed. No longer driven from the demo. |
 | 5 | `log_auth_error_rate_high` | **Not triggerable** — `429`/4xx even under full DB exhaustion (GoTrue's persistent pool survives). |
 | 6 | `log_storage_error_rate_high` | **Not triggerable** — `400`/4xx even under full DB exhaustion (Storage's persistent pool survives). |
 | 7 | `db_not_reachable` | Not driven from the demo (needs a paused project / DNS-TCP failure). |

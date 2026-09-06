@@ -578,6 +578,14 @@ func (cs *checkout) convertCurrency(ctx context.Context, from *pb.Money, toCurre
 }
 
 func (cs *checkout) chargeCard(ctx context.Context, amount *pb.Money, paymentInfo *pb.CreditCardInfo) (string, error) {
+	// Opt-in: when PAYMENT_EDGE_FN_URL is set, route the charge to the Supabase
+	// payment-charge edge function over HTTP instead of gRPC to the local payment
+	// service. Unset (default) keeps the original gRPC path so the bare demo runs
+	// with no external accounts.
+	if edgeURL := os.Getenv("PAYMENT_EDGE_FN_URL"); edgeURL != "" {
+		return cs.chargeCardViaEdge(ctx, edgeURL, amount, paymentInfo)
+	}
+
 	paymentService := cs.paymentSvcClient
 	if flags.PaymentUnreachable.Value(ctx, openfeature.EvaluationContext{}) {
 		badAddress := "badAddress:50051"
@@ -593,6 +601,64 @@ func (cs *checkout) chargeCard(ctx context.Context, amount *pb.Money, paymentInf
 		return "", fmt.Errorf("could not charge the card: %+v", err)
 	}
 	return paymentResp.GetTransactionId(), nil
+}
+
+// chargeCardViaEdge charges through the Supabase payment-charge edge function.
+// The otelhttp transport on cs.httpClient injects the W3C traceparent, so the
+// edge function (and its Sentry event and Supabase edge_logs) share this trace.
+func (cs *checkout) chargeCardViaEdge(ctx context.Context, edgeURL string, amount *pb.Money, paymentInfo *pb.CreditCardInfo) (string, error) {
+	failureMode := flags.SupabasePaymentError.Value(ctx, openfeature.EvaluationContext{})
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"amount": map[string]interface{}{
+			"units":        amount.GetUnits(),
+			"nanos":        amount.GetNanos(),
+			"currencyCode": amount.GetCurrencyCode(),
+		},
+		"creditCard": map[string]interface{}{
+			"number":   paymentInfo.GetCreditCardNumber(),
+			"cvv":      paymentInfo.GetCreditCardCvv(),
+			"expYear":  paymentInfo.GetCreditCardExpirationYear(),
+			"expMonth": paymentInfo.GetCreditCardExpirationMonth(),
+		},
+		"failureMode": failureMode,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", edgeURL, bytes.NewBuffer(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// The gateway requires an apikey even for a --no-verify-jwt function.
+	if key := os.Getenv("SUPABASE_PUBLISHABLE_KEY"); key != "" {
+		req.Header.Set("apikey", key)
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+
+	resp, err := cs.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("could not reach payment edge function: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("could not charge the card: %s", string(body))
+	}
+
+	var result struct {
+		TransactionId string `json:"transactionId"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("invalid payment edge function response: %w", err)
+	}
+	return result.TransactionId, nil
 }
 
 func (cs *checkout) sendOrderConfirmation(ctx context.Context, email string, order *pb.OrderResult) error {
