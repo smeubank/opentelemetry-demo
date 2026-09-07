@@ -79,11 +79,18 @@ Supabase instead — no code changes. Schema + seed live in
 
 | Service | Language | How it connects | What it does |
 |---|---|---|---|
-| product-catalog | Go | Direct Postgres, transaction pooler `:6543` (`otelsql`/libpq, `sslmode=require`) | Reads `catalog.products` |
+| product-catalog | Go | ~~Direct Postgres, transaction pooler `:6543` (`otelsql`/libpq)~~ — **opted out** (kept as fallback) | Reads `catalog.products` |
+| product-catalog | Go | **Data API** via the community `supabase-go` SDK (PostgREST); opt-in with `SUPABASE_URL`+key (see PostgREST) | Reads `catalog.products` |
 | accounting | C#/.NET | Direct Postgres, session pooler `:5432` (EF Core / Npgsql) | Writes `accounting.order/orderitem/shipping` |
 
-We use **direct Postgres**, not the community `supabase-go`/`supabase-csharp` client libraries —
-those wrap PostgREST and would be a needless rewrite of the existing data access.
+product-catalog left direct `libpq` because the **transaction pooler (`:6543`)** doesn't support
+prepared statements — which `libpq` always uses for parameterized queries and (unlike pgx/Prisma/etc.)
+can't disable ([Supabase docs](https://supabase.com/docs/guides/troubleshooting/disabling-prepared-statements-qL8lEL),
+no Go entry). Under concurrency it failed with `unnamed prepared statement does not exist`, masked as
+gRPC `NOT_FOUND` and cascading to cart/checkout. `accounting` is fine on the **session pooler
+(`:5432`)** (dedicated backend per connection).
+The `libpq` path stays as the fallback (bundled DB, no accounts). See also the transaction-pooler
+[caveat](https://supabase.com/docs/guides/database/connecting-to-postgres).
 
 ## Auth
 
@@ -123,11 +130,20 @@ for a compose profile that skips them):
   make the Playwright predicate Supabase-aware, and add a compose profile.
 - **`astronomy-db`** (bundled Postgres) — redundant when the Supabase connection strings are set.
 
-## PostgREST
+## PostgREST (data API)
 
-Not used directly. `catalog.products` has an RLS `SELECT` policy for `anon`/`authenticated`, so
-the frontend *could* read products through `supabase-js`/PostgREST — today it goes through the Go
-product-catalog service instead. Left as a possible future surface.
+`product-catalog` reads `catalog.products` through the **data API** (via the community `supabase-go`
+client), opt-in with `SUPABASE_URL` + `SUPABASE_PUBLISHABLE_KEY` — the fix for the pooler bug above,
+and it makes RLS load-bearing (the `anon` `SELECT` policy is what authorizes the read). Adds two
+surfaces: the Go SDK and the data API.
+
+**Setup:** expose the `catalog` schema (Settings → API → Exposed schemas, or `PATCH .../postgrest`
+`db_schema="public,graphql_public,catalog"`) and grant the anon role read on it (`GRANT USAGE ON
+SCHEMA catalog` + `GRANT SELECT ON catalog.products`, both in `0001_init_catalog_accounting.sql`).
+
+> `supabase-go` is the **community** SDK; switch to the official Go SDK when it ships
+> ([discussion](https://github.com/orgs/supabase/discussions/49311)) — should also close the
+> product-catalog trace-propagation gap (see Observability).
 
 ## Realtime
 
@@ -155,25 +171,51 @@ Deploy: `supabase functions deploy payment-charge --no-verify-jwt`, set the `SEN
 (`SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` are auto-injected), apply `0003`, then set
 `PAYMENT_EDGE_FN_URL`. Full runbook in `supademo-readme.md`.
 
-## Observability (Sentry + Supabase metrics)
+## Observability
 
-| Piece | Where | How |
+The demo ships the **full OpenTelemetry pipeline out of the box**: every service emits **traces,
+metrics, and logs** over OTLP to the **collector**, which fans them out to **Jaeger** (traces),
+**Prometheus** (metrics), **OpenSearch** (logs), and **Grafana** (dashboards). That baseline needs
+no accounts and is what runs on a plain `docker compose up`.
+
+This integration layers a few things on top of that baseline:
+
+| Addition | Where | How |
 |---|---|---|
-| Sentry — errors/logs/replay (frontend) | `instrumentation-client.ts`, `sentry.server/edge.config.ts` | Errors, logs, **session replay**; DSN via `window.ENV` |
-| Sentry — errors/logs (backends) | Go, Python, Node, .NET, Java, Rust, PHP, Ruby services | Native SDK, DSN from env, no-op when blank |
-| Sentry — traces (all services) | `otel-collector` → `otelcol-config-sentry.yml` | Collector forwards OTLP traces to Sentry's OTLP endpoint (also covers C++ currency, which has no native SDK) |
-| Supabase infra metrics | `src/prometheus/supabase/`, Grafana "Supabase Project" dashboard | Prometheus scrapes the privileged metrics endpoint into the demo's own Grafana |
-| Supabase log drains | — | **TODO**: skipped for now (paid plan feature) |
-| Client-side trace propagation | `src/frontend/utils/supabase.ts`; `payment-charge` edge fn | `supabase-js` `tracePropagation: true` + the `/tracing` import per Supabase's [guide](https://supabase.com/docs/guides/observability/client-side-tracing). Verified end-to-end: the demo `trace_id` reaches Supabase `edge_logs`/`function_logs` and matches Jaeger |
+| Supabase infra metrics | `src/prometheus/supabase/`, Grafana → **Demo → Supabase Project** | Prometheus scrapes the project's privileged metrics endpoint into the demo's own Grafana (opt-in include `supabase.yaml`, gitignored — holds the `service_role` key, see `.example`) |
+| Supabase logs (edge / postgres / function) | Supabase dashboard, `query_logs` MCP | Where the propagated `trace_id` lands — see below |
+| Sentry (opt-in error monitoring) | native SDKs per service + a collector fork | one *additional* destination; details below |
+| Supabase log drains | — | **TODO** (paid-plan feature) |
 
-**Sentry SDK tracing is OFF everywhere.** The SDKs handle only errors/logs/metrics/replay. There is
-a single OpenTelemetry tracer per service; the collector forks those OTLP traces to **both** Jaeger
-and Sentry, so traces land in Sentry without any duplicate spans. Sentry trace export is opt-in
-(point `OTEL_COLLECTOR_CONFIG_EXTRAS` at `src/otel-collector/otelcol-config-sentry.yml`).
+**Sentry is one opt-in destination, not the headline.** When a DSN is set, each service's native
+Sentry SDK reports **errors/logs** (and browser **session replay**) with **its own tracing OFF** —
+OpenTelemetry stays the single tracer. The collector additionally forks the same OTLP traces to
+Sentry (opt-in: point `OTEL_COLLECTOR_CONFIG_EXTRAS` at `otelcol-config-sentry.yml`; also covers C++
+currency, which has no native SDK). An empty DSN turns Sentry off entirely and changes nothing about
+the OTel pipeline above.
 
-Supabase metrics are scraped by the demo's existing Prometheus (opt-in include at
-`src/prometheus/supabase/supabase.yaml`, gitignored because it holds the `service_role` key —
-see `supabase.yaml.example`) and shown in Grafana → **Demo → Supabase Project**.
+### Trace propagation into Supabase logs
+
+Getting one `trace_id` to span the app **and** Supabase's own logs takes a slightly different trick
+per service — each talks to Supabase differently, and Supabase captures the trace differently per
+surface:
+
+- **frontend (browser)** — `supabase-js` `tracePropagation: true` + `import '@supabase/supabase-js/tracing'` (`src/frontend/utils/supabase.ts`) injects W3C `traceparent` on auth/data calls.
+- **load-generator (Python)** — `RequestsInstrumentor` auto-injects `traceparent` on its `requests` calls to Supabase.
+- **checkout → payment-charge (Go)** — an `otelhttp`-wrapped client propagates `traceparent` over the HTTP charge call.
+- **payment-charge edge fn (Deno)** — converts the incoming `traceparent` to Sentry's `sentry-trace` (so the Sentry issue shares the id) **and** `console.log`s the `trace_id`, because `function_edge_logs` doesn't parse `traceparent` (below).
+- **product-catalog (Go, data API)** — reads via `supabase-go`; the community SDK doesn't expose its HTTP client, so `traceparent` isn't injected today (**known limitation** — the gRPC spans still show in Jaeger).
+
+The asymmetry worth knowing: the API gateway's **`edge_logs`** auto-parses `traceparent` into a
+queryable `log_attributes['trace_id']`, but **`function_edge_logs` does not** — so edge functions log
+the `trace_id` themselves. Verified end-to-end for the load-gen and edge-function paths (`trace_id`
+matches across Jaeger, Sentry, and Supabase logs).
+
+**Edge functions don't reach the collector.** `payment-charge` runs on Supabase's infra, which can't
+route to the demo's local `otel-collector` — so it exports **no OTLP** and is **not a service in
+Jaeger**. Jaeger shows only the caller-side `checkout → POST payment-charge` client span; the trace is
+stitched across Jaeger + Sentry + Supabase logs by the shared `trace_id`, not by the function emitting
+spans. (A public collector endpoint / OTLP tunnel would be needed to get real edge-fn spans.)
 
 ### Enabling source maps (Sentry, frontend)
 
@@ -193,9 +235,11 @@ Remaining Supabase surfaces, ranked by whether they're actually worth doing.
    backend ever sees a Supabase JWT — the frontend maps `user.id` into localStorage and passes a
    bare string to cart and checkout. Forward the access token and write ownership policies so Auth
    enforces something instead of just labelling the session.
-2. **Read products through PostgREST.** `catalog.products` already has an `anon` read policy, so
-   the frontend can read it via `supabase-js` today. Cheapest way to make RLS demonstrable rather
-   than decorative. Pairs with #1.
+2. **Switch to the official Go SDK.** product-catalog now reads products through PostgREST via the
+   **community** `supabase-go` SDK (see the PostgREST section). Move to the **official Supabase Go
+   SDK** once it ships ([discussion](https://github.com/orgs/supabase/discussions/49311)); that
+   should also let us inject an `otelhttp` client so product-catalog's data-API calls carry
+   `traceparent` (today's known gap).
 3. **Retire `image-provider` and `astronomy-db`.** Both are redundant once Supabase is on (see
    Storage above). Route the remaining hardcoded `/images/products/…` callers through
    `getProductImageUrl()`, make the Locust Playwright predicate Supabase-aware, add a compose

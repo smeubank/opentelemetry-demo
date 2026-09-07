@@ -9,6 +9,7 @@ require (
 	github.com/open-feature/go-sdk v1.18.0
 	github.com/open-feature/go-sdk-contrib/hooks/open-telemetry v0.3.7
 	github.com/open-feature/go-sdk-contrib/providers/flagd v0.6.0
+	github.com/supabase-community/supabase-go v0.0.4
 	go.opentelemetry.io/contrib/bridges/otelslog v0.20.1
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.71.0
 	go.opentelemetry.io/contrib/instrumentation/runtime v0.71.0
@@ -42,6 +43,11 @@ require (
 	github.com/open-feature/flagd-schemas v0.2.13 // indirect
 	github.com/open-feature/flagd/core v0.16.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+	github.com/supabase-community/functions-go v0.0.0-20220927045802-22373e6cb51d // indirect
+	github.com/supabase-community/gotrue-go v1.2.0 // indirect
+	github.com/supabase-community/postgrest-go v0.0.11 // indirect
+	github.com/supabase-community/storage-go v0.7.0 // indirect
+	github.com/tomnomnom/linkheader v0.0.0-20180905144013-02ca5825eb80 // indirect
 	github.com/twmb/murmur3 v1.1.8 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/propagators/autoprop v0.71.0 // indirect

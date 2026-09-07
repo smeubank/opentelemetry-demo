@@ -567,6 +567,10 @@ services:
       - OTEL_CONFIG_FILE=/otel-config.yml
       - OTEL_SEMCONV_STABILITY_OPT_IN=database
       - DB_CONNECTION_STRING=${PRODUCT_CATALOG_DB_CONNECTION_STRING}
+      # Opt-in: when both are set, product-catalog reads products via the Supabase
+      # PostgREST data API (supabase-go) instead of DB_CONNECTION_STRING (lib/pq).
+      - SUPABASE_URL
+      - SUPABASE_PUBLISHABLE_KEY
     healthcheck:
       test: ["CMD", "/bin/grpc_health_probe", "-addr=:${PRODUCT_CATALOG_PORT}"]
       start_period: 10s

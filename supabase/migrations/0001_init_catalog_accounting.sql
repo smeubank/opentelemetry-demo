@@ -80,6 +80,14 @@ CREATE POLICY "products are readable by everyone"
     TO anon, authenticated
     USING (true);
 
+-- product-catalog reads products via the PostgREST data API (supabase-go). PostgREST
+-- connects as anon/authenticated, which need schema USAGE + table SELECT (automatic
+-- for public, explicit for the catalog schema); RLS above still filters the rows.
+-- Also expose the catalog schema to the data API: Settings -> API -> Exposed schemas,
+-- or PATCH /v1/projects/{ref}/postgrest db_schema="public,graphql_public,catalog".
+GRANT USAGE ON SCHEMA catalog TO anon, authenticated;
+GRANT SELECT ON catalog.products TO anon, authenticated;
+
 -- Product Catalog Service: seed product data
 INSERT INTO catalog.products (id, name, description, picture, price_currency_code, price_units, price_nanos, categories)
 VALUES

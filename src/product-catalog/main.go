@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	_ "github.com/lib/pq"
+	supa "github.com/supabase-community/supabase-go"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc/filters"
@@ -62,6 +64,114 @@ var (
 
 func init() {
 	logger = otelslog.NewLogger("product-catalog")
+}
+
+// errProductNotFound is returned by a store's Get when the product id has no row,
+// so the handler can distinguish "not found" from a real backend failure.
+var errProductNotFound = errors.New("product not found")
+
+// productStore abstracts the two read backends: the Supabase PostgREST data API
+// (restStore, used when SUPABASE_URL + SUPABASE_PUBLISHABLE_KEY are set) and the
+// original direct-Postgres path (sqlStore, the fallback). The data API avoids the
+// transaction pooler's prepared-statement limitation that breaks lib/pq under load.
+type productStore interface {
+	List(ctx context.Context) ([]*pb.Product, error)
+	Search(ctx context.Context, query string) ([]*pb.Product, error)
+	Get(ctx context.Context, id string) (*pb.Product, error)
+}
+
+var store productStore
+
+const productColumns = "id,name,description,picture,price_currency_code,price_units,price_nanos,categories"
+
+// sqlStore is the original lib/pq direct-Postgres backend (fallback, unchanged).
+type sqlStore struct{}
+
+func (sqlStore) List(ctx context.Context) ([]*pb.Product, error) { return loadProductsFromDB(ctx) }
+func (sqlStore) Search(ctx context.Context, q string) ([]*pb.Product, error) {
+	return searchProductsFromDB(ctx, q)
+}
+func (sqlStore) Get(ctx context.Context, id string) (*pb.Product, error) {
+	return getProductFromDB(ctx, id)
+}
+
+// productRow maps a catalog.products row from the PostgREST data API.
+type productRow struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Picture      string `json:"picture"`
+	CurrencyCode string `json:"price_currency_code"`
+	Units        int64  `json:"price_units"`
+	Nanos        int32  `json:"price_nanos"`
+	Categories   string `json:"categories"`
+}
+
+func mapProductRows(rows []productRow) []*pb.Product {
+	products := make([]*pb.Product, 0, len(rows))
+	for _, r := range rows {
+		products = append(products, parseProductRow(r.ID, r.Name, r.Description, r.Picture, r.CurrencyCode, r.Categories, r.Units, r.Nanos))
+	}
+	return products
+}
+
+// restStore reads products through the Supabase PostgREST data API via supabase-go.
+// PostgREST is stateless HTTP with a server-managed pool, so there are no prepared
+// statements and no pooler exhaustion under concurrency.
+type restStore struct {
+	client *supa.Client
+}
+
+func (s restStore) List(ctx context.Context) ([]*pb.Product, error) {
+	var rows []productRow
+	if _, err := s.client.From("products").Select(productColumns, "", false).ExecuteTo(&rows); err != nil {
+		return nil, err
+	}
+	return mapProductRows(rows), nil
+}
+
+func (s restStore) Search(ctx context.Context, q string) ([]*pb.Product, error) {
+	pattern := "*" + q + "*"
+	var rows []productRow
+	filter := fmt.Sprintf("name.ilike.%s,description.ilike.%s", pattern, pattern)
+	if _, err := s.client.From("products").Select(productColumns, "", false).Or(filter, "").ExecuteTo(&rows); err != nil {
+		return nil, err
+	}
+	return mapProductRows(rows), nil
+}
+
+func (s restStore) Get(ctx context.Context, id string) (*pb.Product, error) {
+	var rows []productRow
+	if _, err := s.client.From("products").Select(productColumns, "", false).Eq("id", id).ExecuteTo(&rows); err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, errProductNotFound
+	}
+	return mapProductRows(rows)[0], nil
+}
+
+// initStore selects the read backend: the Supabase data API when the Supabase URL
+// and publishable key are set, otherwise the direct-Postgres fallback.
+func initStore() error {
+	url := strings.TrimSpace(os.Getenv("SUPABASE_URL"))
+	key := strings.TrimSpace(os.Getenv("SUPABASE_PUBLISHABLE_KEY"))
+	if url != "" && key != "" {
+		// catalog.products lives in the catalog schema, exposed to the data API.
+		client, err := supa.NewClient(url, key, &supa.ClientOptions{Schema: "catalog"})
+		if err != nil {
+			return fmt.Errorf("failed to create supabase client: %w", err)
+		}
+		store = restStore{client: client}
+		logger.Info("Product catalog reads via the Supabase data API (PostgREST)")
+		return nil
+	}
+	if err := initDatabase(); err != nil {
+		return err
+	}
+	store = sqlStore{}
+	logger.Info("Product catalog reads via direct Postgres (lib/pq)")
+	return nil
 }
 
 func initDatabase() error {
@@ -132,8 +242,8 @@ func main() {
 	global.SetLoggerProvider(sdk.LoggerProvider())
 	otel.SetTextMapPropagator(sdk.Propagator())
 
-	// Initialize database connection
-	if err := initDatabase(); err != nil {
+	// Initialize the product read backend (Supabase data API or direct Postgres)
+	if err := initStore(); err != nil {
 		logger.Error(fmt.Sprintf("Error initializing database: %v", err))
 		sentry.CaptureException(err)
 		sentry.Flush(2 * time.Second)
@@ -284,7 +394,7 @@ func getProductFromDB(ctx context.Context, productID string) (*pb.Product, error
 
 	if err := row.Scan(&id, &name, &description, &picture, &currencyCode, &units, &nanos, &categoriesStr); err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("product not found")
+			return nil, errProductNotFound
 		}
 		return nil, fmt.Errorf("failed to scan product row: %w", err)
 	}
@@ -365,7 +475,7 @@ func (p *productCatalog) Watch(req *healthpb.HealthCheckRequest, ws healthpb.Hea
 func (p *productCatalog) ListProducts(ctx context.Context, req *pb.Empty) (*pb.ListProductsResponse, error) {
 	span := trace.SpanFromContext(ctx)
 
-	products, err := loadProductsFromDB(ctx)
+	products, err := store.List(ctx)
 	if err != nil {
 		span.SetStatus(otelcodes.Error, err.Error())
 		return nil, status.Errorf(codes.Internal, "failed to load products: %v", err)
@@ -391,12 +501,17 @@ func (p *productCatalog) GetProduct(ctx context.Context, req *pb.GetProductReque
 		return nil, status.Error(codes.Internal, msg)
 	}
 
-	found, err := getProductFromDB(ctx, req.Id)
+	found, err := store.Get(ctx, req.Id)
 	if err != nil {
-		msg := fmt.Sprintf("Product Not Found: %s", req.Id)
-		span.SetStatus(otelcodes.Error, msg)
-		span.AddEvent(msg)
-		return nil, status.Error(codes.NotFound, msg)
+		if errors.Is(err, errProductNotFound) {
+			msg := fmt.Sprintf("Product Not Found: %s", req.Id)
+			span.SetStatus(otelcodes.Error, msg)
+			span.AddEvent(msg)
+			return nil, status.Error(codes.NotFound, msg)
+		}
+		// A real backend error must not masquerade as NOT_FOUND.
+		span.SetStatus(otelcodes.Error, err.Error())
+		return nil, status.Errorf(codes.Internal, "failed to get product %s: %v", req.Id, err)
 	}
 
 	span.AddEvent("Product Found")
@@ -418,7 +533,7 @@ func (p *productCatalog) GetProduct(ctx context.Context, req *pb.GetProductReque
 func (p *productCatalog) SearchProducts(ctx context.Context, req *pb.SearchProductsRequest) (*pb.SearchProductsResponse, error) {
 	span := trace.SpanFromContext(ctx)
 
-	result, err := searchProductsFromDB(ctx, req.Query)
+	result, err := store.Search(ctx, req.Query)
 	if err != nil {
 		span.SetStatus(otelcodes.Error, err.Error())
 		return nil, status.Errorf(codes.Internal, "failed to search products: %v", err)
