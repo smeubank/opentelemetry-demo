@@ -158,9 +158,10 @@ unchanged. It:
 
 * validates the card (port of `src/payment/charge.js`) and persists each transaction to
   `public.transactions` via `supabase-js` (migration `0003_transactions.sql`);
-* carries the **Sentry Deno SDK** (`@sentry/deno`, tracing off) and **continues the incoming W3C
-  `traceparent`** (converted to Sentry's `sentry-trace`) so a Sentry issue shares the demo's
-  `trace_id`. It also `console.log`s the `trace_id` — `function_edge_logs` does not parse
+* carries the **Sentry Deno SDK** (`@sentry/deno`, tracing enabled at 1.0) and **continues the
+  incoming W3C `traceparent`** (converted to Sentry's `sentry-trace`) so a Sentry transaction and
+  issue share the demo's `trace_id`. Unlike other services, Sentry tracing is on here because the
+  edge function can't reach the local OTLP collector — Sentry is the only tracer available. It also `console.log`s the `trace_id` — `function_edge_logs` does not parse
   `traceparent` (unlike the gateway `edge_logs`), so this makes it queryable in `function_logs`;
 * can be made to fail via the **`supabasePaymentError`** flag — `invalid_token` (a blunt synthetic
   failure) or `card_format` (a realistic regression: a too-strict parser rejects validly-formatted
@@ -204,7 +205,7 @@ surface:
 - **load-generator (Python)** — `RequestsInstrumentor` auto-injects `traceparent` on its `requests` calls to Supabase.
 - **checkout → payment-charge (Go)** — an `otelhttp`-wrapped client propagates `traceparent` over the HTTP charge call.
 - **payment-charge edge fn (Deno)** — converts the incoming `traceparent` to Sentry's `sentry-trace` (so the Sentry issue shares the id) **and** `console.log`s the `trace_id`, because `function_edge_logs` doesn't parse `traceparent` (below).
-- **product-catalog (Go, data API)** — reads via `supabase-go`; the community SDK doesn't expose its HTTP client, so `traceparent` isn't injected today (**known limitation** — the gRPC spans still show in Jaeger).
+- **product-catalog (Go, data API)** — reads via `supabase-go`; the community SDK doesn't expose its HTTP client, so `traceparent` isn't injected today (**known limitation** — the gRPC spans still show in Jaeger). The deeper gap — that the data API loses the client-side SQL `db` span entirely — is written up in **[supa-instrumentation-gap.md](supa-instrumentation-gap.md)** (a PostgREST-ecosystem OTel gap worth taking upstream).
 
 The asymmetry worth knowing: the API gateway's **`edge_logs`** auto-parses `traceparent` into a
 queryable `log_attributes['trace_id']`, but **`function_edge_logs` does not** — so edge functions log
@@ -240,11 +241,16 @@ Remaining Supabase surfaces, ranked by whether they're actually worth doing.
    SDK** once it ships ([discussion](https://github.com/orgs/supabase/discussions/49311)); that
    should also let us inject an `otelhttp` client so product-catalog's data-API calls carry
    `traceparent` (today's known gap).
-3. **Retire `image-provider` and `astronomy-db`.** Both are redundant once Supabase is on (see
+3. **Close the PostgREST OTel gap (upstream).** The data API loses the client-side SQL `db` span in
+   every language, not just Go — see **[supa-instrumentation-gap.md](supa-instrumentation-gap.md)**.
+   Track PostgREST [#3118](https://github.com/PostgREST/postgrest/issues/3118) (server-side native
+   OTel) and consider a client-side PostgREST instrumentation; interim, demo the `postgres_logs` ↔
+   `trace_id` correlation.
+4. **Retire `image-provider` and `astronomy-db`.** Both are redundant once Supabase is on (see
    Storage above). Route the remaining hardcoded `/images/products/…` callers through
    `getProductImageUrl()`, make the Locust Playwright predicate Supabase-aware, add a compose
    profile.
-4. **Log drains** → Sentry and/or OTLP→OpenSearch
+5. **Log drains** → Sentry and/or OTLP→OpenSearch
    ([docs](https://supabase.com/docs/guides/observability/log-drains)). Paid plan.
 
 ### Worth a look

@@ -23,7 +23,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 // Service role bypasses RLS for the insert; falls back to anon if unset.
 const SUPABASE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ??
   Deno.env.get("SUPABASE_PUBLISHABLE_KEY") ?? "";
-const SENTRY_DSN = Deno.env.get("SENTRY_DSN");
+const SENTRY_DSN = Deno.env.get("SENTRY_DSN") ?? Deno.env.get("SENTRY_DSN_PAYMENT_CHARGE");
 
 let supabase: SupabaseClient | null = null;
 if (SUPABASE_URL && SUPABASE_KEY) {
@@ -33,8 +33,9 @@ if (SUPABASE_URL && SUPABASE_KEY) {
 if (SENTRY_DSN) {
   const base = {
     dsn: SENTRY_DSN,
-    // OTLP/collector owns tracing in this demo; this function only reports errors.
-    tracesSampleRate: 0,
+    // The edge function runs on Supabase infra and cannot reach the local collector,
+    // so Sentry is the sole tracer here. Sample everything.
+    tracesSampleRate: 1.0,
     environment: Deno.env.get("SENTRY_ENVIRONMENT") ?? "otel-demo",
     release: Deno.env.get("SENTRY_RELEASE"),
   };
@@ -232,8 +233,11 @@ Deno.serve((req: Request) => {
   };
 
   // continueTrace links this unit of work to the incoming OTel trace so the
-  // Sentry event's trace_id matches Jaeger and Supabase edge_logs.
+  // Sentry transaction's trace_id matches Jaeger and Supabase edge_logs.
+  // startSpan creates the actual Sentry transaction visible in Performance.
+  const spanOptions = { name: "payment-charge", op: "function.payment" };
   return sentryTrace
-    ? Sentry.continueTrace({ sentryTrace, baggage }, run)
-    : run();
+    ? Sentry.continueTrace({ sentryTrace, baggage }, () =>
+        Sentry.startSpan(spanOptions, run))
+    : Sentry.startSpan(spanOptions, run);
 });
