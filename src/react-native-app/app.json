@@ -28,6 +28,7 @@
       "expo-router",
       "expo-font",
       "expo-web-browser",
+      "@sentry/react-native/expo",
       [
         "expo-splash-screen",
         {

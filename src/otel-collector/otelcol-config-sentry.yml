@@ -1,25 +1,168 @@
 # Copyright The OpenTelemetry Authors
 # SPDX-License-Identifier: Apache-2.0
 
-# Opt-in collector layer that forwards the existing OTLP traces to Sentry's OTLP endpoint,
-# in ADDITION to Jaeger. This keeps a single OpenTelemetry tracer (Sentry SDK tracing stays
-# OFF) while giving Sentry full distributed traces.
+# Opt-in collector layer that forwards OTLP traces to per-service Sentry projects.
+# Traces are fanned out via the routing connector: each service.name maps to its own
+# Sentry OTLP exporter, so issues land in the correct project with the right platform icon.
+# Services not listed in the routing table fall back to the global SENTRY_OTLP_ENDPOINT.
 #
 # Enable by pointing the extras config layer at this file in .env.local:
 #   OTEL_COLLECTOR_CONFIG_EXTRAS=./src/otel-collector/otelcol-config-sentry.yml
-# and setting SENTRY_OTLP_ENDPOINT + SENTRY_OTLP_PUBLIC_KEY.
-#
-# This file is loaded LAST, so the pipeline below REPLACES the traces exporter list. It repeats
-# the upstream exporters (otlp_grpc/jaeger, debug, span_metrics) so they stay active alongside Sentry.
+# and setting SENTRY_OTLP_ENDPOINT + SENTRY_OTLP_PUBLIC_KEY (global fallback).
+
+connectors:
+  # Fan traces out of the main pipeline into per-service Sentry sub-pipelines.
+  routing/sentry:
+    default_pipelines: [traces/sentry_default]
+    error_mode: ignore
+    table:
+      - statement: route() where resource.attributes["service.name"] == "ad"
+        pipelines: [traces/sentry_ad]
+      - statement: route() where resource.attributes["service.name"] == "cart"
+        pipelines: [traces/sentry_cart]
+      - statement: route() where resource.attributes["service.name"] == "accounting"
+        pipelines: [traces/sentry_accounting]
+      - statement: route() where resource.attributes["service.name"] == "checkout"
+        pipelines: [traces/sentry_checkout]
+      - statement: route() where resource.attributes["service.name"] == "product-catalog"
+        pipelines: [traces/sentry_productcatalog]
+      - statement: route() where resource.attributes["service.name"] == "email"
+        pipelines: [traces/sentry_email]
+      - statement: route() where resource.attributes["service.name"] == "frontend" or resource.attributes["service.name"] == "frontend-web"
+        pipelines: [traces/sentry_frontend]
+      - statement: route() where resource.attributes["service.name"] == "payment"
+        pipelines: [traces/sentry_payment]
+      - statement: route() where resource.attributes["service.name"] == "quote"
+        pipelines: [traces/sentry_quote]
+      - statement: route() where resource.attributes["service.name"] == "recommendation"
+        pipelines: [traces/sentry_recommendation]
+      - statement: route() where resource.attributes["service.name"] == "shipping"
+        pipelines: [traces/sentry_shipping]
+      - statement: route() where resource.attributes["service.name"] == "fraud-detection"
+        pipelines: [traces/sentry_fraud_detection]
 
 exporters:
+  # Global fallback — receives traces from services not in the routing table above.
   otlp_http/sentry:
-    # Sentry OTLP ingest base; the exporter appends /v1/traces. Auth via the DSN public key.
     endpoint: ${env:SENTRY_OTLP_ENDPOINT}
     headers:
       x-sentry-auth: "sentry sentry_key=${env:SENTRY_OTLP_PUBLIC_KEY}"
 
+  otlp_http/sentry_ad:
+    endpoint: https://o673219.ingest.us.sentry.io/api/4512044996362240/integration/otlp
+    headers:
+      x-sentry-auth: "sentry sentry_key=3ec6a31ff240762859a433ab6328d678"
+
+  otlp_http/sentry_cart:
+    endpoint: https://o673219.ingest.us.sentry.io/api/4512044996296707/integration/otlp
+    headers:
+      x-sentry-auth: "sentry sentry_key=f0eb273fb74cb99f07cebd08434cfaae"
+
+  otlp_http/sentry_accounting:
+    endpoint: https://o673219.ingest.us.sentry.io/api/4512044996296706/integration/otlp
+    headers:
+      x-sentry-auth: "sentry sentry_key=7f0d0b947717484186c68b8f02769f1f"
+
+  otlp_http/sentry_checkout:
+    endpoint: https://o673219.ingest.us.sentry.io/api/4512044996231168/integration/otlp
+    headers:
+      x-sentry-auth: "sentry sentry_key=74f442fc5dd75dfa8353973de85b7b6f"
+
+  otlp_http/sentry_productcatalog:
+    endpoint: https://o673219.ingest.us.sentry.io/api/4512044996296705/integration/otlp
+    headers:
+      x-sentry-auth: "sentry sentry_key=ba932f3a31c2f58a365a1829f12b5c1a"
+
+  otlp_http/sentry_email:
+    endpoint: https://o673219.ingest.us.sentry.io/api/4512044996362245/integration/otlp
+    headers:
+      x-sentry-auth: "sentry sentry_key=3c135f7b2294463e102b02b0371393e4"
+
+  otlp_http/sentry_frontend:
+    endpoint: https://o673219.ingest.us.sentry.io/api/4512027274117120/integration/otlp
+    headers:
+      x-sentry-auth: "sentry sentry_key=ae661f898aa0493a8d0ad4f7df85b494"
+
+  otlp_http/sentry_payment:
+    endpoint: https://o673219.ingest.us.sentry.io/api/4512044996362244/integration/otlp
+    headers:
+      x-sentry-auth: "sentry sentry_key=e435b901ac92fe624c2882c54d418d3d"
+
+  otlp_http/sentry_quote:
+    endpoint: https://o673219.ingest.us.sentry.io/api/4512044996362243/integration/otlp
+    headers:
+      x-sentry-auth: "sentry sentry_key=401f691fc311722aa4f635c8e0db8f30"
+
+  otlp_http/sentry_recommendation:
+    endpoint: https://o673219.ingest.us.sentry.io/api/4512044996296710/integration/otlp
+    headers:
+      x-sentry-auth: "sentry sentry_key=ae0e1ef658c07ef65ed3d7534d5301f0"
+
+  otlp_http/sentry_shipping:
+    endpoint: https://o673219.ingest.us.sentry.io/api/4512044996362242/integration/otlp
+    headers:
+      x-sentry-auth: "sentry sentry_key=3eab07184227c54c0ead25e13c7730f5"
+
+  otlp_http/sentry_fraud_detection:
+    endpoint: https://o673219.ingest.us.sentry.io/api/4512045003112448/integration/otlp
+    headers:
+      x-sentry-auth: "sentry sentry_key=9fef1098d4e77f0718094e1d4ea6c9e6"
+
 service:
   pipelines:
+    # Extend the main traces pipeline: keep upstream exporters, add the routing connector.
     traces:
-      exporters: [otlp_grpc/jaeger, debug, span_metrics, otlp_http/sentry]
+      exporters: [otlp_grpc/jaeger, debug, span_metrics, routing/sentry]
+
+    # Per-service Sentry pipelines — each receives from the routing connector above.
+    traces/sentry_default:
+      receivers: [routing/sentry]
+      exporters: [otlp_http/sentry]
+
+    traces/sentry_ad:
+      receivers: [routing/sentry]
+      exporters: [otlp_http/sentry_ad]
+
+    traces/sentry_cart:
+      receivers: [routing/sentry]
+      exporters: [otlp_http/sentry_cart]
+
+    traces/sentry_accounting:
+      receivers: [routing/sentry]
+      exporters: [otlp_http/sentry_accounting]
+
+    traces/sentry_checkout:
+      receivers: [routing/sentry]
+      exporters: [otlp_http/sentry_checkout]
+
+    traces/sentry_productcatalog:
+      receivers: [routing/sentry]
+      exporters: [otlp_http/sentry_productcatalog]
+
+    traces/sentry_email:
+      receivers: [routing/sentry]
+      exporters: [otlp_http/sentry_email]
+
+    traces/sentry_frontend:
+      receivers: [routing/sentry]
+      exporters: [otlp_http/sentry_frontend]
+
+    traces/sentry_payment:
+      receivers: [routing/sentry]
+      exporters: [otlp_http/sentry_payment]
+
+    traces/sentry_quote:
+      receivers: [routing/sentry]
+      exporters: [otlp_http/sentry_quote]
+
+    traces/sentry_recommendation:
+      receivers: [routing/sentry]
+      exporters: [otlp_http/sentry_recommendation]
+
+    traces/sentry_shipping:
+      receivers: [routing/sentry]
+      exporters: [otlp_http/sentry_shipping]
+
+    traces/sentry_fraud_detection:
+      receivers: [routing/sentry]
+      exporters: [otlp_http/sentry_fraud_detection]

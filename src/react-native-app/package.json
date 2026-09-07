@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
+    "@sentry/react-native": "^6.8.0",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/core": "^2.10.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
