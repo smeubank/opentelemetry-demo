@@ -1,0 +1,120 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# Builds the fork-modified product-catalog and frontend images, then deploys
+# them to the Hetzner VPS. Only the two services that have Supabase changes are
+# built from this fork; everything else continues to use upstream images.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   HETZNER_SSH_KEY  — private SSH key for root@<server>
+#                      (paste full contents of ~/.ssh/id_ed25519)
+#   GHCR_TOKEN       — GitHub classic PAT with read:packages scope
+#                      (GitHub → Settings → Developer settings → Personal access
+#                      tokens → Tokens (classic) → select read:packages)
+#
+# Images are pushed to ghcr.io/<owner>/opentelemetry-demo where <owner> is
+# derived from github.repository_owner — no hardcoded org name, works in any fork.
+
+name: Build and deploy to Hetzner
+
+on:
+  push:
+    branches: [supa-otel-shop]
+    paths:
+      - src/product-catalog/**
+      - src/frontend/**
+      - src/frontend-proxy/envoy.tmpl.yaml
+      - supabase/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_REPO: ghcr.io/${{ github.repository_owner }}/opentelemetry-demo
+  HETZNER_HOST: 46.225.122.52
+  DEPLOY_DIR: /root/opentelemetry-demo
+
+jobs:
+  build-product-catalog:
+    name: Build product-catalog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/product-catalog/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE_REPO }}:latest-product-catalog
+          cache-from: type=gha,scope=product-catalog
+          cache-to: type=gha,scope=product-catalog,mode=max
+
+  build-frontend:
+    name: Build frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/frontend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE_REPO }}:latest-frontend
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+
+  deploy:
+    name: Deploy to Hetzner
+    needs: [build-product-catalog, build-frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        env:
+          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          echo "$SSH_KEY" > /tmp/hetzner_key
+          chmod 600 /tmp/hetzner_key
+
+          # Write the deploy script with secrets expanded on the runner (not on the server).
+          # The runner's /tmp is ephemeral; this avoids passing secrets as CLI arguments.
+          cat > /tmp/deploy.sh << SCRIPT
+          set -e
+          cd ${DEPLOY_DIR}
+          git pull origin supa-otel-shop
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          docker pull ${IMAGE_REPO}:latest-product-catalog
+          docker pull ${IMAGE_REPO}:latest-frontend
+          docker compose --env-file .env --env-file .env.local \\
+            -f compose.yaml -f compose.full.yaml -f compose.observability.yaml -f compose.override.yaml \\
+            up -d --no-deps product-catalog frontend
+          SCRIPT
+
+          ssh -i /tmp/hetzner_key \
+            -o StrictHostKeyChecking=no \
+            -o BatchMode=yes \
+            root@${HETZNER_HOST} \
+            'bash -s' < /tmp/deploy.sh
