@@ -104,7 +104,8 @@ jobs:
           cat > /tmp/deploy.sh << SCRIPT
           set -e
           cd ${DEPLOY_DIR}
-          git pull origin supa-otel-shop
+          git fetch origin supa-otel-shop
+          git reset --hard origin/supa-otel-shop
           echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           docker pull ${IMAGE_REPO}:latest-product-catalog
           docker pull ${IMAGE_REPO}:latest-frontend

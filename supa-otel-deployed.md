@@ -312,7 +312,7 @@ SERVER=<YOUR_SERVER_IP>
 
 ssh root@$SERVER '
   cd /root/opentelemetry-demo
-  git pull origin supa-otel-shop
+  git fetch origin supa-otel-shop && git reset --hard origin/supa-otel-shop
   docker compose --env-file .env --env-file .env.local \
     -f compose.yaml -f compose.full.yaml -f compose.observability.yaml -f compose.override.yaml \
     pull product-catalog frontend
