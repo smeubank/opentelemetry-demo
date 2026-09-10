@@ -111,7 +111,7 @@ jobs:
           docker pull ${IMAGE_REPO}:latest-frontend
           docker compose --env-file .env --env-file .env.local \\
             -f compose.yaml -f compose.full.yaml -f compose.observability.yaml -f compose.override.yaml \\
-            up -d --no-deps product-catalog frontend
+            up -d --no-deps product-catalog frontend checkout
           SCRIPT
 
           ssh -i /tmp/hetzner_key \
