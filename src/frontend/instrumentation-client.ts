@@ -15,9 +15,12 @@ Sentry.init({
   environment: (typeof window !== 'undefined' && window.ENV?.NEXT_PUBLIC_SENTRY_ENVIRONMENT) || undefined,
   release: (typeof window !== 'undefined' && window.ENV?.NEXT_PUBLIC_SENTRY_RELEASE) || undefined,
   // Tracing stays on the existing OpenTelemetry web SDK (FrontendTracer.ts). Keep Sentry
-  // tracing off so it does not create a second tracer or inject conflicting headers.
+  // tracing off so it does not create a second tracer on the browser. With tracesSampleRate: 0
+  // and no browserTracingIntegration, Sentry does not instrument fetch — OTel's
+  // propagateTraceHeaderCorsUrls in FrontendTracer.ts handles traceparent injection instead.
   tracesSampleRate: 0,
-  tracePropagationTargets: [],
+  // Allow same-origin propagation in case tracesSampleRate is raised later.
+  tracePropagationTargets: [/^\//],
   enableLogs: true,
   replaysSessionSampleRate: 0.1,
   replaysOnErrorSampleRate: 1.0,
