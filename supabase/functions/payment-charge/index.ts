@@ -154,7 +154,11 @@ function resolveFailureMode(body: ChargeRequest): string {
   return body.injectFailure ? "invalid_token" : "";
 }
 
-async function handleCharge(body: ChargeRequest): Promise<Response> {
+async function handleCharge(
+  body: ChargeRequest,
+  tracer?: otelApi.Tracer,
+  parentCtx?: otelApi.Context,
+): Promise<Response> {
   const mode = resolveFailureMode(body);
 
   // Blunt synthetic failure (load generator / demo "just make it fail").
@@ -199,16 +203,43 @@ async function handleCharge(body: ChargeRequest): Promise<Response> {
   const amount = body.amount ?? {};
 
   if (supabase) {
-    const { error } = await supabase.from("transactions").insert({
-      transaction_id: transactionId,
-      card_type: type,
-      last_four: lastFour,
-      amount_units: amount.units ?? 0,
-      amount_nanos: amount.nanos ?? 0,
-      currency_code: amount.currencyCode ?? "USD",
-      loyalty_level: loyaltyLevel,
-    });
-    if (error) throw new Error(`transaction persist failed: ${error.message}`);
+    // supabase-js goes through PostgREST (REST API), not a direct Postgres
+    // connection, so @opentelemetry/instrumentation-pg does not cover it.
+    // Wrap the insert manually so the DB write appears as a child span.
+    const insertCtx = parentCtx ?? otelApi.context.active();
+    const dbSpan = tracer?.startSpan(
+      "db.insert transactions",
+      {
+        kind: otelApi.SpanKind.CLIENT,
+        attributes: {
+          "db.system": "postgresql",
+          "db.operation": "INSERT",
+          "db.sql.table": "transactions",
+          "demo.payment.transaction.id": transactionId,
+          "demo.payment.card_type": type,
+          "demo.user_context.loyalty_level": loyaltyLevel,
+        },
+      },
+      insertCtx,
+    );
+    try {
+      const { error } = await supabase.from("transactions").insert({
+        transaction_id: transactionId,
+        card_type: type,
+        last_four: lastFour,
+        amount_units: amount.units ?? 0,
+        amount_nanos: amount.nanos ?? 0,
+        currency_code: amount.currencyCode ?? "USD",
+        loyalty_level: loyaltyLevel,
+      });
+      if (error) {
+        dbSpan?.setStatus({ code: otelApi.SpanStatusCode.ERROR, message: error.message });
+        throw new Error(`transaction persist failed: ${error.message}`);
+      }
+      dbSpan?.setStatus({ code: otelApi.SpanStatusCode.OK });
+    } finally {
+      dbSpan?.end();
+    }
   }
 
   return new Response(JSON.stringify({ transactionId }), {
@@ -226,7 +257,7 @@ Deno.serve((req: Request) => {
   const baggage = req.headers.get("baggage") ?? undefined;
   const traceId = traceIdFromTraceparent(traceparent) ?? null;
 
-  const run = async (): Promise<Response> => {
+  const run = async (tracer?: otelApi.Tracer, ctx?: otelApi.Context): Promise<Response> => {
     let body: ChargeRequest = {};
     try {
       body = (await req.json()) as ChargeRequest;
@@ -246,7 +277,7 @@ Deno.serve((req: Request) => {
       });
     }
     try {
-      return await handleCharge(body);
+      return await handleCharge(body, tracer, ctx);
     } catch (err) {
       if (SENTRY_DSN) {
         Sentry.captureException(err);
@@ -295,8 +326,10 @@ Deno.serve((req: Request) => {
         status: 500,
         headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
       });
+      // Pass the span's context so handleCharge can create child spans (e.g. db insert).
+      const spanCtxWithSpan = otelApi.trace.setSpan(parentCtx, span);
       try {
-        resp = await run();
+        resp = await run(tracer, spanCtxWithSpan);
         span.setStatus({
           code: resp.ok ? otelApi.SpanStatusCode.OK : otelApi.SpanStatusCode.ERROR,
         });

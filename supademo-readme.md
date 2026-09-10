@@ -62,6 +62,24 @@ service; unset, the bare demo is unchanged. The function carries the Sentry Deno
 the incoming W3C `traceparent`** (so its Sentry issue shares the demo's `trace_id`), and persists
 each transaction to `public.transactions` via supabase-js.
 
+**OTel span coverage vs. the local Node.js payment service:**
+
+| Signal | Local payment (gRPC + Node) | Edge function (HTTP + Deno) |
+|---|---|---|
+| Server span | `oteldemo.PaymentService/Charge` (auto, gRPC) | `payment-charge` (manual OTel SDK) |
+| DB write span | auto via `@opentelemetry/instrumentation-pg` | manual `db.insert transactions` span |
+| DB span attributes | full query text, rows, timing | table name + transaction/card/loyalty attrs |
+| PostgREST hop | n/a | invisible — supabase-js → REST → PostgREST → Postgres; only the outer HTTP call is spanned |
+| Feature flag evaluation | flagd spans (auto, gRPC) | not evaluated in the edge function |
+
+The core gap: **supabase-js goes through PostgREST (a REST API), not a direct Postgres connection**.
+`@opentelemetry/instrumentation-pg` only covers direct `pg`/`postgres` driver calls; it never sees
+the supabase-js HTTP request to PostgREST. The `db.insert transactions` span is manually added in
+the edge function to make the DB write visible, but it has no query-level detail and no PostgREST
+intermediate span. A direct connection from the edge function (via `pg` or `postgres` npm shim)
+would produce the same automatic spans as the Node service — at the cost of connection management
+(edge isolates do not pool connections across invocations).
+
 The `supabasePaymentError` flag makes it fail — a **real failed checkout** that surfaces as three
 correlated signals sharing one `trace_id` (a Jaeger trace, a Sentry issue, and — under load — the
 `log_edge_function_error_rate_high` health check). Two modes:
