@@ -123,6 +123,64 @@ service=checkout`, and place an order.
 - `auth` and `storage` variants are wired too, but those services mostly return **4xx** (not
   counted), so their checks likely won't fire — that's itself a finding (4xx ≠ 5xx).
 
+## Trigger 3 — Accounting service (direct Postgres connection)
+
+The accounting service is a .NET Kafka consumer that writes every completed order to Supabase:
+`accounting."order"`, `accounting.orderitem`, and `accounting.shipping` — three tables already
+created in migration `0001_init_catalog_accounting.sql`. It runs continuously alongside the load
+generator, so the tables accumulate real order history.
+
+**Why direct Postgres, not the C# Supabase SDK:**
+
+The C# Supabase SDK (`supabase-csharp`) routes all DB calls through PostgREST — the same REST API
+that supabase-js uses. This means the same OTel gap as the `payment-charge` edge function: no
+auto-instrumented DB spans, only what you manually wrap.
+
+The accounting service uses **EF Core + Npgsql** with a direct session-pooler connection, which
+gives automatic OTel instrumentation via `OpenTelemetry.AutoInstrumentation` (the .NET auto-
+instrumentation agent). Every `SaveChanges()` call produces SQL spans with full query text and
+timing — automatically, with no manual span code.
+
+Note: `OTEL_DOTNET_AUTO_TRACES_ENTITYFRAMEWORKCORE_INSTRUMENTATION_ENABLED=false` is set in the
+compose config (upstream default), which disables the EF Core layer of instrumentation (LINQ→SQL
+translation, entity-level detail). The Npgsql driver layer is independent and still fires — it
+produces `postgres` spans with `db.query.text` containing the raw SQL batch sent to Postgres.
+
+**The contrast this creates in the demo** (and why it matters for the presentation):
+
+| Layer | Connection path | DB OTel spans |
+|---|---|---|
+| `payment-charge` edge function | supabase-js → PostgREST → Postgres | Manual only — table name + business attrs, no query detail |
+| `accounting` service | EF Core + Npgsql → Supabase session pooler → Postgres | **Auto** — full SQL text, row count, timing per statement |
+
+This is the same database, accessed two different ways. The auto-instrumented path (accounting)
+gives Datadog-DBM-level query insight for free. The supabase-js path (payment-charge) gives nothing
+without manual span code. That gap is exactly what PostgREST OTel adoption (P3 in the initiative)
+would close — PostgREST emitting spans for its own SQL execution would bridge both paths.
+
+**Setup** (already live on Hetzner — documented here for reproducibility):
+
+```bash
+# In .env.local on the server:
+ACCOUNTING_DB_CONNECTION_STRING="Host=aws-0-<region>.pooler.supabase.com;Port=5432;\
+Username=postgres.<ref>;Password=<password>;Database=postgres;SSL Mode=Require"
+# compose.full.yaml maps this to DB_CONNECTION_STRING inside the accounting container.
+```
+
+Use the **session pooler** (port 5432), not the transaction pooler (port 6543). EF Core and Npgsql
+use prepared statements which require session affinity — the transaction pooler discards prepared
+statements between transactions and causes `42P05`/`26000` errors.
+
+**Verify data is flowing:**
+
+```sql
+SELECT
+  (SELECT count(*) FROM accounting."order")    AS orders,
+  (SELECT count(*) FROM accounting.orderitem)  AS order_items,
+  (SELECT count(*) FROM accounting.shipping)   AS shipments,
+  (SELECT count(*) FROM public.transactions)   AS transactions;
+```
+
 ## Health-check status observed on this project
 
 | # | Health check | Result |
