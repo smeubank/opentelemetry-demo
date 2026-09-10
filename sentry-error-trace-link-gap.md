@@ -52,9 +52,12 @@ Add the OTel SDK to the edge function:
 Orthogonal to OTel: Sentry should surface signals that are today invisible for edge functions
 deployed on Supabase:
 
-- **Cold-start aborts** — if the Deno isolate is killed during cold-start initialization (OOM,
-  resource limit, deploy race), there is no log and no Sentry event. Supabase's gateway logs the
-  abort; Sentry doesn't see it.
+- **Cold-start latency** — every Supabase function isolate initialization emits a `booted (time:
+  Xms)` log entry in `function_logs` (observed: 99ms, 120ms). This boot cost is invisible to
+  Sentry: the Sentry transaction starts after boot, so the booted time is lost from the performance
+  profile. Sentry shows a `payment-charge` span of N ms, but the real wall-clock time from the
+  caller's perspective is N + boot_ms. The gap is the difference. For cold-start aborts (OOM,
+  resource limit, deploy race), neither Sentry nor OTel sees anything — only Supabase gateway logs.
 - **Auth rejections** — requests rejected by Supabase before the function runs (invalid JWT,
   missing API key) produce a 401/403 at the gateway layer. The function never executes and Sentry
   never captures anything.
