@@ -76,3 +76,11 @@ src/prometheus/supabase/*.yaml
 
 # Track B eval drafts staged for the supabase/evals repo — not part of this PR
 evals-staging/
+
+# Local operational notes and initiative drafts (not part of the demo)
+supa-tracing-initiative/
+supa-server-alert.md
+supa-otel-deployed.md
+pg-tracing-postgrest-otel-context.md
+sentry-error-trace-link-gap.md
+supa-instrumentation-gap.md

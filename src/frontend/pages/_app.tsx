@@ -76,6 +76,7 @@ if (typeof window !== 'undefined') {
         const next = SessionGateway.getSession();
         Sentry.setUser({ id: next.userId, email: next.email });
         OpenFeature.setContext({ targetingKey: next.userId, ...next });
+        queryClient.invalidateQueries({ queryKey: ['cart'] });
       });
     }
   }
