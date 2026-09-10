@@ -5,92 +5,69 @@
 A Sentry issue exists (e.g.
 [#7715573613](https://steven-eubank.sentry.io/issues/7715573613/?project=4512027274117120))
 with a full stack trace showing a checkout/payment failure. The same Jaeger trace ID
-(`e7bee9df9a6d20d9a8e1b477721bb2e5`) has a complete span waterfall across frontend → checkout →
-payment-charge. In Sentry's trace explorer, all spans are connected. But the issue page shows
-**no linked trace** — you cannot click from the error into the trace, and the trace does not
-appear in the "Traces" tab of the issue.
+(`e7bee9df9a6d20d9a8e1b477721bb2e5`) has a complete span waterfall across frontend → checkout.
+In Sentry's trace explorer, those spans are connected. But the issue page shows **no linked
+trace**, and the payment-charge edge function does not appear in the Jaeger trace at all.
 
-## Why this happens
+## Root cause
 
-The demo uses two separate pipelines into Sentry:
+The edge function never emits OTel spans. It only runs the Sentry SDK, which sends Sentry-format
+transactions directly to Sentry's ingest. Two things follow from this:
 
-| Pipeline | Path | Who sets `trace_id` |
-|---|---|---|
-| **Errors** | Next.js Sentry SDK (`onRequestError`, `captureException`) → `https://…ingest.sentry.io` | Sentry SDK reads from the active OTel context |
-| **Traces** | OTel collector → OTLP routing → `https://…ingest.sentry.io/api/…/integration/otlp` | OTel span's W3C `trace_id` |
+1. **Jaeger sees nothing from the edge function** — the collector never receives spans with
+   `service.name = "payment"` (or "payment-charge") from Supabase, so the Jaeger trace ends at
+   the checkout service's outgoing HTTP span.
 
-For the error and the trace to be linked in Sentry's UI, the `trace_id` attached to the Sentry
-error event must match the `trace_id` of the OTLP spans. That requires the OTel span to be
-**active in the same async context** when the Sentry SDK captures the error.
+2. **Sentry error ↔ trace link is broken** — the Sentry error event is captured by the Next.js
+   frontend SDK when checkout returns a failure. At that moment Sentry tries to attach the
+   current OTel trace context. The OTel span (from `chargeCardViaEdge`'s `otelhttp` client) is
+   still active in the checkout service (Go), but by the time the error surfaces in Next.js it
+   may be in a different async scope where the OTel span context is no longer active. Sentry emits
+   the error without a `trace_id` → no link.
 
-In the checkout-failure scenario the span tree looks like this:
+The edge function itself is reachable. The checkout service (`chargeCardViaEdge`) correctly
+injects `traceparent` via the `otelhttp` transport on its HTTP client. The edge function receives
+the header, converts it to Sentry's `sentry-trace` format via `sentryTraceFromTraceparent`, and
+calls `Sentry.continueTrace()` — so the Sentry SDK side is wired. The OTel side is missing
+entirely.
 
-```
-browser (OTel)
-  └─ POST /api/checkout  (Next.js server — OTel + Sentry SDK)
-       └─ gRPC → checkout service (Go, OTel only)
-            └─ HTTP POST → payment-charge (Supabase Edge Function, Deno Sentry SDK)
-                 └─ supabase-js insert → Supabase Postgres
-```
+## The fix (in progress)
 
-The checkout service (Go) makes the HTTP call to the Supabase edge function and gets a 500. It
-propagates the error back to Next.js via gRPC. Next.js's `onRequestError` captures the error. At
-that point the active OTel context is the `/api/checkout` server span — which IS the right
-trace. But `@sentry/nextjs` with `skipOpenTelemetrySetup: true` reads the OTel context via the
-OTel global API. If the gRPC response handling resolves in an async tick where the OTel span
-context has been lost (propagation gap across the gRPC boundary or an untraced async boundary),
-Sentry gets no trace context and emits the error event without a `trace_id`.
+Add the OTel SDK to the edge function:
+- `@opentelemetry/sdk-trace-base` + `@opentelemetry/exporter-trace-otlp-http` (fetch-based,
+  works in Deno) configured to export to the public OTLP endpoint on Hetzner
+- `service.name = "payment"` so the routing connector in `otelcol-config-sentry.yml` sends spans
+  to `traces/sentry_payment` (Sentry) and the main pipeline sends them to Jaeger — no config
+  change needed
+- `W3CTraceContextPropagator.extract()` continues the parent trace from the `traceparent` header
+- After creating the OTel span, set `Sentry.getCurrentScope().setPropagationContext({ traceId,
+  spanId })` so error events carry the same `trace_id` as the OTel spans
+- `await otelProvider.forceFlush()` before returning the response (edge isolates freeze on
+  response; `BatchSpanProcessor.forceFlush()` actually waits for the OTLP fetch to complete)
+- `OTEL_EXPORTER_OTLP_ENDPOINT` as a Supabase secret pointing to
+  `http://46.225.122.52:8080/otlp-http/v1/traces`
 
-The result: Sentry has the error. Sentry has the trace (via OTLP). It cannot join them because
-the error event's `trace_id` field is empty or wrong.
+## Side topic: what Sentry + Supabase could do better
 
-## The Supabase-specific angle
+Orthogonal to OTel: Sentry should surface signals that are today invisible for edge functions
+deployed on Supabase:
 
-This case involves the edge function **not being reached** (or failing immediately). When the
-payment-charge function is unreachable, the Go checkout service times out or gets a network
-error before the Supabase edge runtime even logs the request. So:
+- **Cold-start aborts** — if the Deno isolate is killed during cold-start initialization (OOM,
+  resource limit, deploy race), there is no log and no Sentry event. Supabase's gateway logs the
+  abort; Sentry doesn't see it.
+- **Auth rejections** — requests rejected by Supabase before the function runs (invalid JWT,
+  missing API key) produce a 401/403 at the gateway layer. The function never executes and Sentry
+  never captures anything.
+- **Network-level timeouts** — if the caller (checkout service) times out waiting for the edge
+  function response, the function may still be running. The caller's Sentry event says "timeout"
+  but there is no signal about what the function was doing at that moment.
 
-- No Supabase edge function logs for this invocation (nothing to join on)
-- No Sentry event from the edge function (never ran)
-- The error surfaces in the Next.js layer but without OTel context attached
+All three cases produce a Sentry error in the caller with no matching event in the callee's Sentry
+project, and no span in the trace. A Sentry ↔ Supabase integration could surface these via
+Supabase gateway events forwarded to Sentry as "infrastructure spans" — similar to how Vercel's
+Sentry integration surfaces edge function cold-start and timeout metadata.
 
-This is an example of a **cross-runtime trace gap** that would be solved if:
-1. Supabase exposed the incoming `traceparent` in `edge_logs` / `function_logs` even for
-   failed/aborted invocations — so you can join the error log to the trace by `trace_id`
-2. The Sentry SDK's `onRequestError` hook in Next.js reliably attached OTel context across
-   async gRPC boundaries (Sentry + OTel interop issue)
-
-## What an agentic debugging session needs
-
-To reliably diagnose a checkout failure of this kind, an agent would need:
-
-- **Sentry MCP**: read the issue, get the stack trace and timestamp
-- **Jaeger/OTLP query**: fetch all spans for the `trace_id`, confirm which service's span is
-  the leaf with a 5xx status
-- **Supabase MCP**: query `edge_logs` / `function_logs` by `trace_id` for the same time window
-  — today this only works if the edge function was reached; if it wasn't, there's no log to
-  find
-- **Correlation**: join Sentry error timestamp → Jaeger trace → Supabase logs. Today the join
-  requires the user to manually carry the `trace_id` between tools.
-
-The gap the agent would hit: "I can see the Sentry error, I can see the Jaeger trace, but
-Supabase has no log for this `trace_id`" — because the edge function invocation that failed
-either never made it to Supabase or was aborted before the runtime logged it.
-
-## What needs to be fixed (not doing now)
-
-**Sentry side:**
-- Ensure `@sentry/nextjs` with `skipOpenTelemetrySetup: true` correctly propagates OTel
-  `trace_id` onto error events across gRPC/async boundaries. This is an SDK interop issue
-  the Sentry team should own.
-
-**Supabase side:**
-- Log the incoming `traceparent` / `trace_id` on ALL edge function invocations, including
-  those that fail at the gateway level (auth rejection, cold-start abort, network timeout).
-  Today `function_logs` only contains logs emitted by `console.log()` inside the function —
-  if the function never runs, there is no log.
-- Exposing `trace_id` as a first-class queryable field on `edge_logs` and `function_logs`
-  (FDBKIN-35096) would let any APM join errors to traces without per-SDK instrumentation.
+Worth raising with the Sentry team as a partnership opportunity.
 
 ## Related
 
