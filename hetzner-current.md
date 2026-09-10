@@ -4,7 +4,6 @@
 **IP:** 46.225.122.52  
 **Spec:** CPX32 · x86 · 4 vCPU · 8 GB RAM · 160 GB SSD · Nuremberg  
 **Branch:** supa-otel-shop  
-**Supabase project:** poevzlmscrydhaytrwjx
 
 ---
 
