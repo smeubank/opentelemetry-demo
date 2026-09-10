@@ -33,9 +33,11 @@ if (SUPABASE_URL && SUPABASE_KEY) {
 if (SENTRY_DSN) {
   const base = {
     dsn: SENTRY_DSN,
-    // The edge function runs on Supabase infra and cannot reach the local collector,
-    // so Sentry is the sole tracer here. Sample everything.
-    tracesSampleRate: 1.0,
+    // Do not start new root traces independently. continueTrace() (below) carries
+    // the parent's sampling decision from the incoming traceparent, so sampled
+    // user checkouts still get a Sentry span while load-generator traffic (which
+    // uses a separate root trace) is dropped.
+    tracesSampleRate: 0,
     environment: Deno.env.get("SENTRY_ENVIRONMENT") ?? "otel-demo",
     release: Deno.env.get("SENTRY_RELEASE"),
   };
@@ -235,9 +237,15 @@ Deno.serve((req: Request) => {
   // continueTrace links this unit of work to the incoming OTel trace so the
   // Sentry transaction's trace_id matches Jaeger and Supabase edge_logs.
   // startSpan creates the actual Sentry transaction visible in Performance.
+  // flush() must be awaited after startSpan — edge isolates freeze immediately
+  // after returning a response, so any queued Sentry data would be lost otherwise.
   const spanOptions = { name: "payment-charge", op: "function.payment" };
+  async function traced(): Promise<Response> {
+    const resp = await Sentry.startSpan(spanOptions, run);
+    if (SENTRY_DSN) await Sentry.flush(2000);
+    return resp;
+  }
   return sentryTrace
-    ? Sentry.continueTrace({ sentryTrace, baggage }, () =>
-        Sentry.startSpan(spanOptions, run))
-    : Sentry.startSpan(spanOptions, run);
+    ? Sentry.continueTrace({ sentryTrace, baggage }, traced)
+    : traced();
 });
