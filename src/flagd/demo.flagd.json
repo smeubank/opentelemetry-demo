@@ -168,6 +168,24 @@
         "off": 0
       }
     },
+    "supabaseAccountingBackend": {
+      "defaultVariant": "npgsql",
+      "description": "[Supabase] Select how the accounting service writes orders to Supabase: 'npgsql' (direct session-pooler connection, full auto-instrumented SQL spans via Npgsql driver) or 'supabase_sdk' (C# Supabase SDK via PostgREST, manual spans only — same OTel gap as the payment-charge edge function). Only takes effect when ACCOUNTING_DB_CONNECTION_STRING is set. Flip at runtime to compare automatic db.query.text spans against the PostgREST blind spot. See supa-accounting-backend.md.",
+      "state": "ENABLED",
+      "variants": {
+        "npgsql": "npgsql",
+        "supabase_sdk": "supabase_sdk"
+      }
+    },
+    "supabaseOrderQueueBackend": {
+      "defaultVariant": "kafka",
+      "description": "[Supabase] Select the backend for the order post-processing flow (checkout -> accounting + fraud-detection): 'kafka' (out-of-the-box default) or 'pgmq' (Supabase Queues). Only takes effect when checkout is configured with a pgmq connection; otherwise the order flow always runs over Kafka. Flip at runtime to compare a fully auto-instrumented broker against a Postgres-native queue. See supa-pgmq-kafka.md.",
+      "state": "ENABLED",
+      "variants": {
+        "kafka": "kafka",
+        "pgmq": "pgmq"
+      }
+    },
     "supabasePaymentError": {
       "defaultVariant": "off",
       "description": "[Supabase] Make the payment-charge edge function fail checkout (opt-in; requires PAYMENT_EDGE_FN_URL). 'invalid_token' = blunt synthetic failure; 'card_format' = realistic regression where a too-strict card parser rejects validly-formatted (dashed) card numbers. Either produces a failed checkout, a Sentry issue, and the edge-function health check, all sharing one trace_id.",

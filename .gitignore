@@ -84,3 +84,5 @@ supa-otel-deployed.md
 pg-tracing-postgrest-otel-context.md
 sentry-error-trace-link-gap.md
 supa-instrumentation-gap.md
+supa-accounting-backend.md
+supa-pgmq-kafka.md
