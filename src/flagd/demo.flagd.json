@@ -178,8 +178,8 @@
       }
     },
     "supabaseOrderQueueBackend": {
-      "defaultVariant": "kafka",
-      "description": "[Supabase] Select the backend for the order post-processing flow (checkout -> accounting + fraud-detection): 'kafka' (out-of-the-box default) or 'pgmq' (Supabase Queues). Only takes effect when checkout is configured with a pgmq connection; otherwise the order flow always runs over Kafka. Flip at runtime to compare a fully auto-instrumented broker against a Postgres-native queue. See supa-pgmq-kafka.md.",
+      "defaultVariant": "pgmq",
+      "description": "[Supabase] Select the backend for the order post-processing flow (checkout -> accounting + fraud-detection): 'kafka' or 'pgmq' (Supabase Queues). Default is 'pgmq', but this flag is inert unless checkout has a pgmq connection configured — a plain demo (no pgmq DSN) always runs over Kafka regardless. So Kafka is the effective out-of-the-box default, while a pgmq-configured deploy defaults to pgmq. Flip at runtime to compare a fully auto-instrumented broker against a Postgres-native queue. See supa-pgmq-kafka.md.",
       "state": "ENABLED",
       "variants": {
         "kafka": "kafka",
