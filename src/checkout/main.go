@@ -54,12 +54,14 @@ import (
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	flags "github.com/open-telemetry/opentelemetry-demo/src/checkout/flags"
 	pb "github.com/open-telemetry/opentelemetry-demo/src/checkout/genproto/oteldemo"
 	"github.com/open-telemetry/opentelemetry-demo/src/checkout/kafka"
 	"github.com/open-telemetry/opentelemetry-demo/src/checkout/money"
+	"github.com/open-telemetry/opentelemetry-demo/src/checkout/pgmq"
 )
 
 //go:generate go install google.golang.org/protobuf/cmd/protoc-gen-go
@@ -150,6 +152,7 @@ type checkout struct {
 	kafkaBrokerSvcAddr    string
 	pb.UnimplementedCheckoutServiceServer
 	KafkaProducerClient     sarama.AsyncProducer
+	pgmqProducer            *pgmq.Producer
 	shippingSvcClient       pb.ShippingServiceClient
 	productCatalogSvcClient pb.ProductCatalogServiceClient
 	cartSvcClient           pb.CartServiceClient
@@ -261,6 +264,17 @@ func main() {
 		if err != nil {
 			logger.Error(err.Error())
 		}
+	}
+
+	// Opt-in Supabase Queues (pgmq) producer. Nil unless a pgmq connection is
+	// configured, in which case the supabaseOrderQueueBackend flag selects the
+	// backend per order. See supa-pgmq-kafka.md.
+	svc.pgmqProducer, err = pgmq.CreateProducer()
+	if err != nil {
+		logger.Error(fmt.Sprintf("failed to create pgmq producer: %v", err))
+	}
+	if svc.pgmqProducer != nil {
+		logger.Info("Supabase Queues (pgmq) producer configured; supabaseOrderQueueBackend flag selects the order backend")
 	}
 
 	logger.Info(fmt.Sprintf("service config: %+v", svc))
@@ -730,7 +744,87 @@ func (cs *checkout) shipOrder(ctx context.Context, address *pb.Address, items []
 	return shipResp.TrackingID, nil
 }
 
+// sendToPostProcessor routes the OrderResult to the effective order backend. Kafka
+// is the out-of-the-box default; when a pgmq producer is configured, the
+// supabaseOrderQueueBackend flag selects pgmq or kafka per order. See supa-pgmq-kafka.md.
 func (cs *checkout) sendToPostProcessor(ctx context.Context, result *pb.OrderResult) {
+	backend := "kafka"
+	if cs.pgmqProducer != nil {
+		backend = flags.SupabaseOrderQueueBackend.Value(ctx, openfeature.EvaluationContext{})
+	}
+
+	if backend == "pgmq" {
+		cs.sendToPgmq(ctx, result)
+		return
+	}
+	cs.sendToKafka(ctx, result)
+}
+
+// sendToPgmq sends the OrderResult to both pgmq order queues (one per consumer,
+// mirroring Kafka's two consumer groups). Unlike Kafka, pgmq has no messaging
+// auto-instrumentation, so the producer span and trace propagation are hand-written.
+func (cs *checkout) sendToPgmq(ctx context.Context, result *pb.OrderResult) {
+	orderJSON, err := protojson.Marshal(result)
+	if err != nil {
+		logger.Error(fmt.Sprintf("Failed to marshal order to JSON: %+v", err))
+		return
+	}
+
+	for _, queue := range pgmq.Queues {
+		cs.sendOneToPgmq(ctx, queue, orderJSON)
+	}
+}
+
+func (cs *checkout) sendOneToPgmq(ctx context.Context, queue string, orderJSON []byte) {
+	spanCtx, span := tracer.Start(
+		ctx,
+		fmt.Sprintf("%s publish", queue),
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			semconv.PeerService("supabase"),
+			semconv.MessagingSystemKey.String("pgmq"),
+			semconv.MessagingDestinationName(queue),
+			semconv.MessagingOperationPublish,
+			attribute.String("demo.queue.backend", "pgmq"),
+			attribute.String("demo.queue.name", queue),
+		),
+	)
+	defer span.End()
+
+	// pgmq messages carry no headers, so the W3C traceparent rides inside the JSON
+	// envelope: { "traceparent": "...", "order": { <OrderResult as JSON> } }.
+	carrier := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(spanCtx, carrier)
+
+	envelope := map[string]any{
+		"traceparent": carrier["traceparent"],
+		"order":       json.RawMessage(orderJSON),
+	}
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		span.SetStatus(otelcodes.Error, err.Error())
+		logger.Error(fmt.Sprintf("Failed to marshal pgmq envelope: %+v", err))
+		return
+	}
+
+	startTime := time.Now()
+	if err := cs.pgmqProducer.Send(spanCtx, queue, payload); err != nil {
+		span.SetAttributes(
+			attribute.Bool("messaging.pgmq.producer.success", false),
+			attribute.Int("messaging.pgmq.producer.duration_ms", int(time.Since(startTime).Milliseconds())),
+		)
+		span.SetStatus(otelcodes.Error, err.Error())
+		logger.Error(fmt.Sprintf("Failed to send order to pgmq queue %s: %v", queue, err))
+		return
+	}
+	span.SetAttributes(
+		attribute.Bool("messaging.pgmq.producer.success", true),
+		attribute.Int("messaging.pgmq.producer.duration_ms", int(time.Since(startTime).Milliseconds())),
+	)
+	logger.Info(fmt.Sprintf("Sent order to pgmq queue %s, duration: %v", queue, time.Since(startTime)))
+}
+
+func (cs *checkout) sendToKafka(ctx context.Context, result *pb.OrderResult) {
 	message, err := proto.Marshal(result)
 	if err != nil {
 		logger.Error(fmt.Sprintf("Failed to marshal message to protobuf: %+v", err))

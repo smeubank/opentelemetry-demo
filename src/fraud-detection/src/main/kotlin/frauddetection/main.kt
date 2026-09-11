@@ -64,6 +64,10 @@ fun main() {
         subscribe(listOf(topic))
     }
 
+    // Opt-in: run the Supabase Queues (pgmq) poller concurrently with the Kafka
+    // consumer. No-op unless QUEUE_PGMQ_ENABLED and FRAUD_PGMQ_JDBC_URL are set.
+    startPgmqPoller()
+
     var totalCount = 0L
 
     consumer.use {

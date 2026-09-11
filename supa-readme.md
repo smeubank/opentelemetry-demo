@@ -149,6 +149,34 @@ SCHEMA catalog` + `GRANT SELECT ON catalog.products`, both in `0001_init_catalog
 
 Not used yet. Candidate: live cart/inventory updates.
 
+## Queues (pgmq)
+
+An opt-in **Supabase Queues (pgmq)** backend for the order flow (`checkout` → `accounting` +
+`fraud-detection`), running *alongside* Kafka. The headline is that **Supabase carries a real
+message-queue workload**, not just CRUD Postgres: the same database backing the catalog and
+accounting tables also transports the order events across three services and two languages —
+something people usually stand up a dedicated broker for.
+
+`checkout` JSON-encodes each `OrderResult` into an envelope
+(`{ "traceparent": ..., "order": {...} }`) and `pgmq.send`s it to **two queues**
+(`orders_accounting`, `orders_fraud` — one per consumer, reproducing Kafka's independent consumer
+groups). `accounting` (Npgsql poller) and `fraud-detection` (JDBC poller) each `pgmq.read` their
+queue, continue the trace from the envelope `traceparent`, process, then `pgmq.delete`. All
+connections use the **session pooler (`:5432`)** because the pollers issue prepared statements.
+
+Kafka stays the out-of-the-box default. When checkout is configured with a pgmq connection, the
+`supabaseOrderQueueBackend` flag flips the two at runtime — which doubles as the **secondary
+teaching payload: a side-by-side instrumentation contrast**. Kafka gives fully auto-instrumented
+messaging spans (semconv across Go/.NET/Kotlin) + `kafkametrics`; pgmq has no messaging
+auto-instrumentation, so producer/consumer spans are hand-written while the underlying SQL still
+yields `db` spans for free, and queue depth comes from a `sqlquery` receiver over
+`pgmq.metrics_all()`.
+
+**Enable it:** apply `supabase/migrations/0004_pgmq_queues.sql`, set the pgmq vars in `.env.local`
+(`QUEUE_PGMQ_ENABLED=true` + the session-pooler connection strings — see `.env.local.example`), and
+run with `-f compose.pgmq.yaml` added for queue-depth metrics. Full design, decisions, and
+functional trade-offs in **[supa-pgmq-kafka.md](supa-pgmq-kafka.md)**.
+
 ## Edge Functions
 
 **`payment-charge`** (`supabase/functions/payment-charge/index.ts`) is an opt-in Deno port of the
@@ -278,7 +306,6 @@ On the list deliberately, but none of these earn their cost today:
   `payment-charge` function (see above); currency specifically stays put — it's the one C++/gRPC
   service, and that's the point of it.
 - **flagd flags in Postgres.** Static JSON by design; a table plus a sync path buys no new insight.
-- **Kafka → pgmq.** Kafka is load-bearing teaching material in this demo.
 - **`recommendation` cache / `ad` map in Postgres.** In-memory by design. pgvector on
   `recommendation` would be a new feature, not a migration.
 

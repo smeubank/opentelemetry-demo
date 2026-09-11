@@ -1,0 +1,23 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# Opt-in Supabase Queues (pgmq) metrics layer: patches otel-collector to scrape
+# pgmq.metrics_all() for per-queue depth. Kept separate from compose.full.yaml so a
+# blank COLLECTOR_PGMQ_DSN never errors the default or full demo. Add it only when
+# the pgmq backend is configured. See supa-pgmq-kafka.md.
+#
+# Usage (with the pgmq env vars set in .env.local):
+#   docker compose -f compose.yaml -f compose.full.yaml -f compose.pgmq.yaml up
+
+services:
+  otel-collector:
+    command:
+      - "--config=/etc/otelcol-config.yml"
+      - "--config=/etc/otelcol-config-full.yml"
+      - "--config=/etc/otelcol-config-extras.yml"
+      - "--config=/etc/otelcol-config-pgmq.yml"
+      - "--feature-gates=service.profilesSupport"
+    volumes:
+      - ${OTEL_COLLECTOR_CONFIG_PGMQ}:/etc/otelcol-config-pgmq.yml
+    environment:
+      - COLLECTOR_PGMQ_DSN

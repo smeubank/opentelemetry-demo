@@ -146,6 +146,9 @@ services:
       # edge function (over HTTP, with the apikey) instead of gRPC to payment.
       - PAYMENT_EDGE_FN_URL
       - SUPABASE_PUBLISHABLE_KEY
+      # Opt-in: when set, checkout can route the order flow over Supabase Queues
+      # (pgmq) instead of Kafka, selected by the supabaseOrderQueueBackend flag.
+      - CHECKOUT_PGMQ_DB_CONNECTION_STRING
       - GOMEMLIMIT=16MiB
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://${OTEL_COLLECTOR_HOST}:${OTEL_COLLECTOR_PORT_HTTP}
       - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf

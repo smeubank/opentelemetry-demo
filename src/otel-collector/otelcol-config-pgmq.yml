@@ -1,0 +1,42 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# Opt-in Supabase Queues (pgmq) metrics. Loaded only via compose.pgmq.yaml, which
+# also supplies COLLECTOR_PGMQ_DSN, so an unset DSN never errors in the default or
+# full demo. Scrapes pgmq.metrics_all() for per-queue depth, mirroring the role
+# kafkametrics plays for the Kafka backend. See supa-pgmq-kafka.md.
+#
+# IMPORTANT: The OTel Collector merges config files but REPLACES arrays, not appends.
+# This file is loaded last, so its metrics pipeline repeats every receiver from
+# otelcol-config.yml and otelcol-config-full.yml plus sqlquery/pgmq.
+
+receivers:
+  sqlquery/pgmq:
+    driver: postgres
+    datasource: ${env:COLLECTOR_PGMQ_DSN}
+    collection_interval: 10s
+    queries:
+      - sql: >
+          SELECT queue_name AS "demo.queue.name",
+                 queue_length,
+                 total_messages,
+                 COALESCE(oldest_msg_age_sec, 0) AS oldest_msg_age_sec
+          FROM pgmq.metrics_all()
+        metrics:
+          - metric_name: demo.queue.length
+            value_column: queue_length
+            attribute_columns: ["demo.queue.name"]
+            value_type: int
+          - metric_name: demo.queue.messages_total
+            value_column: total_messages
+            attribute_columns: ["demo.queue.name"]
+            value_type: int
+          - metric_name: demo.queue.oldest_message_age
+            value_column: oldest_msg_age_sec
+            attribute_columns: ["demo.queue.name"]
+            value_type: int
+
+service:
+  pipelines:
+    metrics:
+      receivers: [docker_stats, http_check/frontend-proxy, host_metrics, nginx, otlp, redis, postgresql, span_metrics, kafkametrics, sqlquery/pgmq]

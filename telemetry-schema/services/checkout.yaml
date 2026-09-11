@@ -22,3 +22,5 @@ attribute_groups:
       - ref: demo.order.amount
       - ref: demo.order.items.count
       - ref: demo.cart.items.count
+      - ref: demo.queue.name
+      - ref: demo.queue.backend

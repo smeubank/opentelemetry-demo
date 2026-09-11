@@ -14,6 +14,7 @@ RUN go mod download
 COPY ./src/checkout/genproto/oteldemo/ genproto/oteldemo/
 COPY ./src/checkout/flags/ flags/
 COPY ./src/checkout/kafka/ kafka/
+COPY ./src/checkout/pgmq/ pgmq/
 COPY ./src/checkout/money/ money/
 COPY ./src/checkout/main.go main.go
 

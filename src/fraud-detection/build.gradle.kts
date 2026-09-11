@@ -48,6 +48,10 @@ dependencies {
     implementation("org.apache.logging.log4j:log4j-core:2.26.1")
     implementation("org.slf4j:slf4j-api:2.0.18")
     implementation("com.google.protobuf:protobuf-kotlin:${protobufVersion}")
+    // JSON<->protobuf for the pgmq envelope (also pulls in Gson for the envelope itself)
+    implementation("com.google.protobuf:protobuf-java-util:${protobufVersion}")
+    // JDBC driver for the opt-in Supabase Queues (pgmq) poller; auto-instrumented by the Java agent
+    implementation("org.postgresql:postgresql:42.7.7")
     implementation("dev.openfeature:sdk:1.22.1")
     implementation("dev.openfeature.contrib.providers:flagd:0.14.1")
     implementation("io.sentry:sentry:8.16.0")

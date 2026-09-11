@@ -32,7 +32,6 @@ internal class Consumer : BackgroundService
 
     private readonly ILogger _logger;
     private readonly IConsumer<string, byte[]> _consumer;
-    private readonly string? _dbConnectionString;
     private static readonly ActivitySource MyActivitySource = new("Accounting.Consumer");
 
     public Consumer(ILogger<Consumer> logger)
@@ -46,8 +45,6 @@ internal class Consumer : BackgroundService
         _consumer.Subscribe(TopicName);
 
         Log.KafkaConnecting(_logger, servers);
-
-        _dbConnectionString = Environment.GetEnvironmentVariable("DB_CONNECTION_STRING");
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -86,48 +83,7 @@ internal class Consumer : BackgroundService
         {
             var order = OrderResult.Parser.ParseFrom(message.Value);
             Log.OrderReceivedMessage(_logger, order);
-
-            if (_dbConnectionString == null)
-            {
-                return;
-            }
-
-            using var dbContext = new DBContext();
-            var orderEntity = new OrderEntity
-            {
-                Id = order.OrderId
-            };
-            dbContext.Add(orderEntity);
-            foreach (var item in order.Items)
-            {
-                var orderItem = new OrderItemEntity
-                {
-                    ItemCostCurrencyCode = item.Cost.CurrencyCode,
-                    ItemCostUnits = item.Cost.Units,
-                    ItemCostNanos = item.Cost.Nanos,
-                    ProductId = item.Item.ProductId,
-                    Quantity = item.Item.Quantity,
-                    OrderId = order.OrderId
-                };
-
-                dbContext.Add(orderItem);
-            }
-
-            var shipping = new ShippingEntity
-            {
-                ShippingTrackingId = order.ShippingTrackingId,
-                ShippingCostCurrencyCode = order.ShippingCost.CurrencyCode,
-                ShippingCostUnits = order.ShippingCost.Units,
-                ShippingCostNanos = order.ShippingCost.Nanos,
-                StreetAddress = order.ShippingAddress.StreetAddress,
-                City = order.ShippingAddress.City,
-                State = order.ShippingAddress.State,
-                Country = order.ShippingAddress.Country,
-                ZipCode = order.ShippingAddress.ZipCode,
-                OrderId = order.OrderId
-            };
-            dbContext.Add(shipping);
-            dbContext.SaveChanges();
+            OrderPersistence.Persist(_logger, order);
         }
         catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
         {

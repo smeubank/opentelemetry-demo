@@ -30,3 +30,22 @@ var SupabasePaymentError = struct {
 		return client.StringValueDetails(ctx, "supabasePaymentError", "", evalCtx)
 	},
 }
+
+// SupabaseOrderQueueBackend returns the value of the "supabaseOrderQueueBackend"
+// feature flag, which selects the backend for the order post-processing flow:
+// "kafka" (the out-of-the-box default) or "pgmq" (Supabase Queues). It only takes
+// effect when checkout is configured with a pgmq connection; otherwise the order
+// flow always runs over Kafka regardless of this flag. See supa-pgmq-kafka.md.
+//
+// The flag is a type of string and defaults to "kafka".
+var SupabaseOrderQueueBackend = struct {
+	Value            evaluationValue[string]
+	ValueWithDetails evaluationDetails[string]
+}{
+	Value: func(ctx context.Context, evalCtx openfeature.EvaluationContext) string {
+		return client.String(ctx, "supabaseOrderQueueBackend", "kafka", evalCtx)
+	},
+	ValueWithDetails: func(ctx context.Context, evalCtx openfeature.EvaluationContext) (openfeature.GenericEvaluationDetails[string], error) {
+		return client.StringValueDetails(ctx, "supabaseOrderQueueBackend", "kafka", evalCtx)
+	},
+}

@@ -1,0 +1,17 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+file_format: definition/2
+attributes:
+  - key: demo.queue.name
+    type: string
+    brief: Order queue name
+    stability: stable
+    note: The name of the order post-processing queue
+    examples: ["orders_accounting", "orders_fraud"]
+  - key: demo.queue.backend
+    type: string
+    brief: Order queue backend
+    stability: stable
+    note: The messaging backend carrying the order post-processing flow
+    examples: ["kafka", "pgmq"]

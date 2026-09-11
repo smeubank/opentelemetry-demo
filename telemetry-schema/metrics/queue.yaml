@@ -1,0 +1,38 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+file_format: definition/2
+metrics:
+  - name: demo.queue.length
+    brief: Number of ready (visible) messages in a pgmq queue
+    instrument: gauge
+    unit: "{message}"
+    stability: stable
+    requirement_level: recommended
+    annotations:
+      service: otel-collector
+    attributes:
+      - ref: demo.queue.name
+        requirement_level: required
+  - name: demo.queue.messages_total
+    brief: Total number of messages in a pgmq queue, including invisible ones
+    instrument: gauge
+    unit: "{message}"
+    stability: stable
+    requirement_level: recommended
+    annotations:
+      service: otel-collector
+    attributes:
+      - ref: demo.queue.name
+        requirement_level: required
+  - name: demo.queue.oldest_message_age
+    brief: Age of the oldest message in a pgmq queue
+    instrument: gauge
+    unit: "s"
+    stability: stable
+    requirement_level: recommended
+    annotations:
+      service: otel-collector
+    attributes:
+      - ref: demo.queue.name
+        requirement_level: required

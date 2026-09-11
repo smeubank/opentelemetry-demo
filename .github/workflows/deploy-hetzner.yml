@@ -1,9 +1,9 @@
 # Copyright The OpenTelemetry Authors
 # SPDX-License-Identifier: Apache-2.0
 
-# Builds the fork-modified product-catalog, frontend, and checkout images, then
-# deploys them to the Hetzner VPS. Only services with Supabase changes are built
-# from this fork; everything else continues to use upstream images.
+# Builds the fork-modified product-catalog, frontend, checkout, accounting, and
+# fraud-detection images, then deploys them to the Hetzner VPS. Only services with
+# Supabase changes are built from this fork; everything else uses upstream images.
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
 #   HETZNER_SSH_KEY  — private SSH key for root@<server>
@@ -24,6 +24,10 @@ on:
       - src/product-catalog/**
       - src/frontend/**
       - src/checkout/**
+      - src/accounting/**
+      - src/fraud-detection/**
+      - src/flagd/**
+      - src/otel-collector/**
       - src/frontend-proxy/envoy.tmpl.yaml
       - supabase/**
   workflow_dispatch:
@@ -86,6 +90,57 @@ jobs:
           cache-from: type=gha,scope=checkout
           cache-to: type=gha,scope=checkout,mode=max
 
+  build-accounting:
+    name: Build accounting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/accounting/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE_REPO }}:latest-accounting
+          cache-from: type=gha,scope=accounting
+          cache-to: type=gha,scope=accounting,mode=max
+
+  build-fraud-detection:
+    name: Build fraud-detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/fraud-detection/Dockerfile
+          platforms: linux/amd64
+          push: true
+          # Keep in sync with OTEL_JAVA_AGENT_VERSION in .env
+          build-args: |
+            OTEL_JAVA_AGENT_VERSION=2.31.1
+          tags: ${{ env.IMAGE_REPO }}:latest-fraud-detection
+          cache-from: type=gha,scope=fraud-detection
+          cache-to: type=gha,scope=fraud-detection,mode=max
+
   build-frontend:
     name: Build frontend
     runs-on: ubuntu-latest
@@ -112,7 +167,7 @@ jobs:
 
   deploy:
     name: Deploy to Hetzner
-    needs: [build-product-catalog, build-frontend, build-checkout]
+    needs: [build-product-catalog, build-frontend, build-checkout, build-accounting, build-fraud-detection]
     runs-on: ubuntu-latest
     steps:
       - name: Deploy
@@ -135,9 +190,11 @@ jobs:
           docker pull ${IMAGE_REPO}:latest-product-catalog
           docker pull ${IMAGE_REPO}:latest-frontend
           docker pull ${IMAGE_REPO}:latest-checkout
+          docker pull ${IMAGE_REPO}:latest-accounting
+          docker pull ${IMAGE_REPO}:latest-fraud-detection
           docker compose --env-file .env --env-file .env.local \\
-            -f compose.yaml -f compose.full.yaml -f compose.observability.yaml -f compose.override.yaml \\
-            up -d --no-deps product-catalog frontend checkout
+            -f compose.yaml -f compose.full.yaml -f compose.observability.yaml -f compose.pgmq.yaml -f compose.override.yaml \\
+            up -d --no-deps product-catalog frontend checkout accounting fraud-detection
           SCRIPT
 
           ssh -i /tmp/hetzner_key \

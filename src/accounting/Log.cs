@@ -43,5 +43,17 @@ namespace Accounting
             EventName = "accounting.order.parsing_failed",
             Message = "Order parsing failed:")]
         public static partial void OrderParsingFailed(ILogger logger, Exception exception);
+
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            EventName = "accounting.pgmq.connecting",
+            Message = "Polling Supabase Queues (pgmq): {queue}")]
+        public static partial void PgmqConnecting(ILogger logger, string queue);
+
+        [LoggerMessage(
+            Level = LogLevel.Error,
+            EventName = "accounting.pgmq.poll_failed",
+            Message = "pgmq poll error:")]
+        public static partial void PgmqPollError(ILogger logger, Exception exception);
     }
 }
