@@ -18,7 +18,7 @@ import { IProductCheckout } from '../../../../types/Cart';
 
 const Checkout: NextPage = () => {
   const { query } = useRouter();
-  const { orderId, items = [], shippingAddress, shippingCost = { units: 0, currencyCode: 'USD', nanos: 0 } } = JSON.parse((query.order || '{}') as string) as IProductCheckout;
+  const { orderId, items = [], shippingAddress = { streetAddress: '', city: '', state: '', country: '', zipCode: '' }, shippingCost = { units: 0, currencyCode: 'USD', nanos: 0 } } = JSON.parse((query.order || '{}') as string) as IProductCheckout;
 
   const orderTotal = useMemo<Money>(() => {
     const itemsTotal = items.reduce((acc, { item, cost = { units: 0, nanos: 0, currencyCode: 'USD' } }) => {
