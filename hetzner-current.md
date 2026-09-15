@@ -68,6 +68,24 @@ extension instead of the default POSTGRES_IMAGE — the image is built locally
 (`docker compose ... build astronomy-db` before first start). See
 supa-tracing-initiative/04-postgres-pg-tracing/dogfood-decisions.md.
 
+Deploy notes (from the 2026-09-15 pg_tracing rollout):
+
+- Full sequence: `git pull`, append the two astronomy DSNs to `.env.local`, then
+  `docker compose <full file list> build astronomy-db accounting product-catalog`
+  followed by `up -d`. astronomy-db has no data volume, so recreation reruns
+  `init.sql` + `zz-pg-tracing.sql` cleanly.
+- **Collector configs are bind-mounted and NOT hot-reloaded** — after changing any
+  `otelcol-config-*.yml`, `up -d` alone does not recreate the container (config
+  isn't part of the compose hash). Run
+  `docker compose <file list> restart otel-collector` explicitly, or new routing
+  (e.g. the astronomy-db → Sentry entry) silently never loads.
+- `docker exec product-catalog env` fails (scratch-based image, no coreutils) —
+  use `docker inspect product-catalog --format '{{json .Config.Env}}'` instead.
+- pg_tracing spans land in the Sentry project's **Trace Explorer / spans dataset**
+  (`span.op: default`), not in transaction-based views — `sentry trace list`
+  shows nothing even when ingestion works; verify with the events API
+  (`dataset=spans`).
+
 `/root/opentelemetry-demo/.env.local`:
 - Supabase credentials
 - `GRAFANA_PORT=3000:3000` — fixed host port binding
