@@ -83,8 +83,17 @@ Deploy notes (from the 2026-09-15 pg_tracing rollout):
   use `docker inspect product-catalog --format '{{json .Config.Env}}'` instead.
 - pg_tracing spans land in the Sentry project's **Trace Explorer / spans dataset**
   (`span.op: default`), not in transaction-based views — `sentry trace list`
-  shows nothing even when ingestion works; verify with the events API
-  (`dataset=spans`).
+  and the project's Performance/Traces pages show nothing even when ingestion
+  works. Find them under **Explore → Traces** (org level, filter
+  `project:otel-shop-astronomy-db-postgres`), by opening a stitched trace from
+  any app project's trace waterfall, or via the events API (`dataset=spans`).
+- **flagd is the same bind-mount gotcha as the collector**: a long-running flagd
+  container does not reliably reload `demo.flagd.json` after `git pull` — new
+  flags simply don't appear in the UI. Restart it:
+  `docker compose <file list> restart flagd flagd-ui`.
+- flagd-ui flag flips **write to the checked-out `src/flagd/demo.flagd.json`**,
+  leaving the git tree dirty on the server — `git checkout -- src/flagd/demo.flagd.json`
+  (or stash) before the next `git pull`, or the pull fails on conflict.
 
 `/root/opentelemetry-demo/.env.local`:
 - Supabase credentials
