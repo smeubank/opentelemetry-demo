@@ -216,6 +216,9 @@ Deploy: `supabase functions deploy payment-charge --no-verify-jwt`, set the `SEN
 
 ## Observability
 
+Full current-state diagram (order flow, DB switching, telemetry fan-out):
+[supa-architecture.md](supa-architecture.md).
+
 The demo ships the **full OpenTelemetry pipeline out of the box**: every service emits **traces,
 metrics, and logs** over OTLP to the **collector**, which fans them out to **Jaeger** (traces),
 **Prometheus** (metrics), **OpenSearch** (logs), and **Grafana** (dashboards). That baseline needs
