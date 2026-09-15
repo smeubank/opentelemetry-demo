@@ -40,6 +40,8 @@ connectors:
         pipelines: [traces/sentry_shipping]
       - statement: route() where resource.attributes["service.name"] == "fraud-detection"
         pipelines: [traces/sentry_fraud_detection]
+      - statement: route() where resource.attributes["service.name"] == "astronomy-db"
+        pipelines: [traces/sentry_astronomy_db]
 
 exporters:
   # Global fallback — receives traces from services not in the routing table above.
@@ -108,6 +110,13 @@ exporters:
     headers:
       x-sentry-auth: "sentry sentry_key=9fef1098d4e77f0718094e1d4ea6c9e6"
 
+  # pg_tracing spans from astronomy-db. Sentry has no Postgres project type, so
+  # the target project uses the generic PHP platform as a stand-in.
+  otlp_http/sentry_astronomy_db:
+    endpoint: https://o673219.ingest.us.sentry.io/api/4512091184300032/integration/otlp
+    headers:
+      x-sentry-auth: "sentry sentry_key=f938b1ca7f35ba2cbc097aa07c6f8f09"
+
 service:
   pipelines:
     # Extend the main traces pipeline: keep upstream exporters, add the routing connector.
@@ -166,3 +175,7 @@ service:
     traces/sentry_fraud_detection:
       receivers: [routing/sentry]
       exporters: [otlp_http/sentry_fraud_detection]
+
+    traces/sentry_astronomy_db:
+      receivers: [routing/sentry]
+      exporters: [otlp_http/sentry_astronomy_db]

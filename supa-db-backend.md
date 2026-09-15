@@ -80,3 +80,12 @@ The comment is sent to both backends; Supabase ignores it today.
    stalls.
 3. With `compose.pg-tracing.yaml` active, open a checkout or product trace —
    `astronomy-db` spans (parse/plan/execute) share the app trace id.
+
+## Sentry
+
+astronomy-db spans route to their own Sentry project,
+`otel-shop-astronomy-db-postgres` (steven-eubank org). Sentry has no Postgres
+project type, so the project uses the generic PHP platform as a stand-in. The
+routing entry lives in `src/otel-collector/otelcol-config-sentry.yml`
+(`service.name == "astronomy-db"`); anything unrouted still falls back to the
+global `SENTRY_OTLP_ENDPOINT`.
