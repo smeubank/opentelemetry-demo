@@ -57,9 +57,9 @@ type productCatalog struct {
 }
 
 var (
-	logger *slog.Logger
-	db     *sql.DB
-	reg    metric.Registration
+	logger      *slog.Logger
+	dbPools     []*sql.DB
+	dbStatsRegs []metric.Registration
 )
 
 func init() {
@@ -80,19 +80,31 @@ type productStore interface {
 	Get(ctx context.Context, id string) (*pb.Product, error)
 }
 
-var store productStore
+// primaryStore serves reads by default; astronomyStore is a second
+// direct-Postgres backend (the astronomy-db deployed with pg_tracing) that the
+// supabaseDatabaseBackend flag can switch to at runtime. astronomyStore stays
+// nil unless ASTRONOMY_DB_CONNECTION_STRING is configured, which keeps the flag
+// inert on a plain demo.
+var (
+	primaryStore   productStore
+	astronomyStore productStore
+)
 
 const productColumns = "id,name,description,picture,price_currency_code,price_units,price_nanos,categories"
 
 // sqlStore is the original lib/pq direct-Postgres backend (fallback, unchanged).
-type sqlStore struct{}
-
-func (sqlStore) List(ctx context.Context) ([]*pb.Product, error) { return loadProductsFromDB(ctx) }
-func (sqlStore) Search(ctx context.Context, q string) ([]*pb.Product, error) {
-	return searchProductsFromDB(ctx, q)
+type sqlStore struct {
+	db *sql.DB
 }
-func (sqlStore) Get(ctx context.Context, id string) (*pb.Product, error) {
-	return getProductFromDB(ctx, id)
+
+func (s sqlStore) List(ctx context.Context) ([]*pb.Product, error) {
+	return loadProductsFromDB(ctx, s.db)
+}
+func (s sqlStore) Search(ctx context.Context, q string) ([]*pb.Product, error) {
+	return searchProductsFromDB(ctx, s.db, q)
+}
+func (s sqlStore) Get(ctx context.Context, id string) (*pb.Product, error) {
+	return getProductFromDB(ctx, s.db, id)
 }
 
 // productRow maps a catalog.products row from the PostgREST data API.
@@ -151,8 +163,11 @@ func (s restStore) Get(ctx context.Context, id string) (*pb.Product, error) {
 	return mapProductRows(rows)[0], nil
 }
 
-// initStore selects the read backend: the Supabase data API when the Supabase URL
-// and publishable key are set, otherwise the direct-Postgres fallback.
+// initStore selects the primary read backend (the Supabase data API when the
+// Supabase URL and publishable key are set, otherwise direct Postgres) and, when
+// ASTRONOMY_DB_CONNECTION_STRING is configured, opens the secondary astronomy-db
+// backend for the supabaseDatabaseBackend flag. A failing secondary is logged
+// and skipped so it can never break the primary path.
 func initStore() error {
 	url := strings.TrimSpace(os.Getenv("SUPABASE_URL"))
 	key := strings.TrimSpace(os.Getenv("SUPABASE_PUBLISHABLE_KEY"))
@@ -162,30 +177,39 @@ func initStore() error {
 		if err != nil {
 			return fmt.Errorf("failed to create supabase client: %w", err)
 		}
-		store = restStore{client: client}
+		primaryStore = restStore{client: client}
 		logger.Info("Product catalog reads via the Supabase data API (PostgREST)")
-		return nil
+	} else {
+		db, err := openDB(os.Getenv("DB_CONNECTION_STRING"))
+		if err != nil {
+			return err
+		}
+		primaryStore = sqlStore{db: db}
+		logger.Info("Product catalog reads via direct Postgres (lib/pq)")
 	}
-	if err := initDatabase(); err != nil {
-		return err
+
+	if astronomyConn := strings.TrimSpace(os.Getenv("ASTRONOMY_DB_CONNECTION_STRING")); astronomyConn != "" {
+		db, err := openDB(astronomyConn)
+		if err != nil {
+			logger.Error(fmt.Sprintf("astronomy-db backend unavailable, supabaseDatabaseBackend flag disabled: %v", err))
+		} else {
+			astronomyStore = sqlStore{db: db}
+			logger.Info("astronomy-db backend available for the supabaseDatabaseBackend flag")
+		}
 	}
-	store = sqlStore{}
-	logger.Info("Product catalog reads via direct Postgres (lib/pq)")
 	return nil
 }
 
-func initDatabase() error {
-	connStr := os.Getenv("DB_CONNECTION_STRING")
+func openDB(connStr string) (*sql.DB, error) {
 	if connStr == "" {
-		return fmt.Errorf("DB_CONNECTION_STRING environment variable not set")
+		return nil, fmt.Errorf("DB_CONNECTION_STRING environment variable not set")
 	}
 
 	dbAttrs := otelsql.WithAttributes(
 		append(otelsql.AttributesFromDSN(connStr), semconv.DBSystemNamePostgreSQL)...,
 	)
 
-	var err error
-	db, err = otelsql.Open("postgres", connStr,
+	db, err := otelsql.Open("postgres", connStr,
 		dbAttrs,
 		otelsql.WithSQLCommenter(true),
 		otelsql.WithSpanOptions(otelsql.SpanOptions{
@@ -193,21 +217,39 @@ func initDatabase() error {
 			OmitRows:             true,
 		}))
 	if err != nil {
-		return fmt.Errorf("failed to open database connection: %w", err)
+		return nil, fmt.Errorf("failed to open database connection: %w", err)
 	}
 
-	reg, err = otelsql.RegisterDBStatsMetrics(db, dbAttrs)
+	reg, err := otelsql.RegisterDBStatsMetrics(db, dbAttrs)
 	if err != nil {
-		return fmt.Errorf("failed to register database metrics: %w", err)
+		return nil, fmt.Errorf("failed to register database metrics: %w", err)
 	}
 
 	// Test the connection
 	if err := db.Ping(); err != nil {
-		return fmt.Errorf("failed to ping database: %w", err)
+		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
+	dbPools = append(dbPools, db)
+	dbStatsRegs = append(dbStatsRegs, reg)
 	logger.Info("Database connection established")
-	return nil
+	return db, nil
+}
+
+// currentStore resolves the read backend for one request. The flag is only
+// consulted when the astronomy-db backend is configured; the chosen backend is
+// recorded on the active span as demo.db.backend.
+func currentStore(ctx context.Context) productStore {
+	if astronomyStore == nil {
+		return primaryStore
+	}
+	backend := flags.SupabaseDatabaseBackend.Value(ctx, openfeature.EvaluationContext{})
+	selected := primaryStore
+	if backend == "astronomy_pg" {
+		selected = astronomyStore
+	}
+	trace.SpanFromContext(ctx).SetAttributes(attribute.String("demo.db.backend", backend))
+	return selected
 }
 
 func main() {
@@ -250,14 +292,14 @@ func main() {
 		os.Exit(1)
 	}
 	defer func() {
-		if db != nil {
-			if err := db.Close(); err != nil {
+		for _, pool := range dbPools {
+			if err := pool.Close(); err != nil {
 				logger.Error(fmt.Sprintf("Error closing database connection: %v", err))
 			} else {
 				logger.Info("Database connection closed")
 			}
 		}
-		if reg != nil {
+		for _, reg := range dbStatsRegs {
 			if err := reg.Unregister(); err != nil {
 				logger.Error(fmt.Sprintf("Error unregistering database metrics: %v", err))
 			} else {
@@ -323,7 +365,7 @@ func main() {
 	logger.Info("Product Catalog gRPC server stopped")
 }
 
-func loadProductsFromDB(ctx context.Context) ([]*pb.Product, error) {
+func loadProductsFromDB(ctx context.Context, db *sql.DB) ([]*pb.Product, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database connection not initialized")
 	}
@@ -348,7 +390,7 @@ func loadProductsFromDB(ctx context.Context) ([]*pb.Product, error) {
 	return products, nil
 }
 
-func searchProductsFromDB(ctx context.Context, query string) ([]*pb.Product, error) {
+func searchProductsFromDB(ctx context.Context, db *sql.DB, query string) ([]*pb.Product, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database connection not initialized")
 	}
@@ -375,7 +417,7 @@ func searchProductsFromDB(ctx context.Context, query string) ([]*pb.Product, err
 	return products, nil
 }
 
-func getProductFromDB(ctx context.Context, productID string) (*pb.Product, error) {
+func getProductFromDB(ctx context.Context, db *sql.DB, productID string) (*pb.Product, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database connection not initialized")
 	}
@@ -475,7 +517,7 @@ func (p *productCatalog) Watch(req *healthpb.HealthCheckRequest, ws healthpb.Hea
 func (p *productCatalog) ListProducts(ctx context.Context, req *pb.Empty) (*pb.ListProductsResponse, error) {
 	span := trace.SpanFromContext(ctx)
 
-	products, err := store.List(ctx)
+	products, err := currentStore(ctx).List(ctx)
 	if err != nil {
 		span.SetStatus(otelcodes.Error, err.Error())
 		return nil, status.Errorf(codes.Internal, "failed to load products: %v", err)
@@ -501,7 +543,7 @@ func (p *productCatalog) GetProduct(ctx context.Context, req *pb.GetProductReque
 		return nil, status.Error(codes.Internal, msg)
 	}
 
-	found, err := store.Get(ctx, req.Id)
+	found, err := currentStore(ctx).Get(ctx, req.Id)
 	if err != nil {
 		if errors.Is(err, errProductNotFound) {
 			msg := fmt.Sprintf("Product Not Found: %s", req.Id)
@@ -533,7 +575,7 @@ func (p *productCatalog) GetProduct(ctx context.Context, req *pb.GetProductReque
 func (p *productCatalog) SearchProducts(ctx context.Context, req *pb.SearchProductsRequest) (*pb.SearchProductsResponse, error) {
 	span := trace.SpanFromContext(ctx)
 
-	result, err := store.Search(ctx, req.Query)
+	result, err := currentStore(ctx).Search(ctx, req.Query)
 	if err != nil {
 		span.SetStatus(otelcodes.Error, err.Error())
 		return nil, status.Errorf(codes.Internal, "failed to search products: %v", err)

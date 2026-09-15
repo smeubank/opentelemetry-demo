@@ -177,6 +177,15 @@
         "supabase_sdk": "supabase_sdk"
       }
     },
+    "supabaseDatabaseBackend": {
+      "defaultVariant": "supabase",
+      "description": "[Supabase] Select the Postgres backend for product-catalog reads and accounting order writes. 'supabase': the primary configured database (Supabase Postgres on a deployed environment). 'astronomy_pg': the demo's traditional astronomy-db Postgres, deployed with the pg_tracing extension (compose.pg-tracing.yaml), so queries emit server-side spans that stitch into the app trace. Inert unless the service has ASTRONOMY_DB_CONNECTION_STRING configured. See supa-db-backend.md.",
+      "state": "ENABLED",
+      "variants": {
+        "astronomy_pg": "astronomy_pg",
+        "supabase": "supabase"
+      }
+    },
     "supabaseOrderQueueBackend": {
       "defaultVariant": "pgmq",
       "description": "[Supabase] Select the backend for the order post-processing flow (checkout -> accounting + fraud-detection): 'kafka' or 'pgmq' (Supabase Queues). Default is 'pgmq', but this flag is inert unless checkout has a pgmq connection configured — a plain demo (no pgmq DSN) always runs over Kafka regardless. So Kafka is the effective out-of-the-box default, while a pgmq-configured deploy defaults to pgmq. Flip at runtime to compare a fully auto-instrumented broker against a Postgres-native queue. See supa-pgmq-kafka.md.",

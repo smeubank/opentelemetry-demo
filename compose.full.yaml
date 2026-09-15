@@ -33,6 +33,10 @@ services:
       - SENTRY_ENVIRONMENT
       - SENTRY_RELEASE
       - DB_CONNECTION_STRING=${ACCOUNTING_DB_CONNECTION_STRING}
+      # Opt-in: secondary astronomy-db DSN for the supabaseDatabaseBackend flag.
+      - ASTRONOMY_DB_CONNECTION_STRING=${ACCOUNTING_ASTRONOMY_DB_CONNECTION_STRING}
+      - FLAGD_HOST
+      - FLAGD_PORT
       # Opt-in: run the Supabase Queues (pgmq) poller alongside the Kafka consumer.
       # Reuses DB_CONNECTION_STRING (session pooler). No-op unless set to true.
       - QUEUE_PGMQ_ENABLED

@@ -19,6 +19,8 @@
 		<PackageReference Include="Microsoft.Extensions.Logging" />
 		<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" />
 		<PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+		<PackageReference Include="OpenFeature" />
+		<PackageReference Include="OpenFeature.Contrib.Providers.Flagd" />
 		<PackageReference Include="OpenTelemetry.AutoInstrumentation" />
 		<PackageReference Include="Sentry" />
 	</ItemGroup>

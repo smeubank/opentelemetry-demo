@@ -1,0 +1,11 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+file_format: definition/2
+attributes:
+  - key: demo.db.backend
+    type: string
+    brief: Database backend
+    stability: stable
+    note: Which Postgres backend served the operation, as selected by the supabaseDatabaseBackend flag
+    examples: ["supabase", "astronomy_pg"]

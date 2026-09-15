@@ -11,7 +11,7 @@ using System.Diagnostics;
 
 namespace Accounting;
 
-internal class DBContext : DbContext
+internal class DBContext(string connectionString) : DbContext
 {
     public DbSet<OrderEntity> Orders { get; set; }
     public DbSet<OrderItemEntity> CartItems { get; set; }
@@ -19,9 +19,9 @@ internal class DBContext : DbContext
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
-        var connectionString = Environment.GetEnvironmentVariable("DB_CONNECTION_STRING");
-
-        optionsBuilder.UseNpgsql(connectionString).UseSnakeCaseNamingConvention();
+        optionsBuilder.UseNpgsql(connectionString)
+            .UseSnakeCaseNamingConvention()
+            .AddInterceptors(TraceContextCommandInterceptor.Instance);
     }
 }
 

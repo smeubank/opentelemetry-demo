@@ -1,0 +1,23 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# pg_tracing only supports PostgreSQL 14-16, so this image pins PG 16 instead of
+# the demo default POSTGRES_IMAGE. Used only via compose.pg-tracing.yaml.
+FROM postgres:16 AS build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential git ca-certificates libcurl4-openssl-dev postgresql-server-dev-16 \
+    && rm -rf /var/lib/apt/lists/*
+
+# PG_CFLAGS="" overrides the upstream Makefile's -Werror: the v0.1.3 otel
+# exporter trips a curl_easy_setopt type warning under newer gcc/libcurl.
+RUN git clone --depth 1 --branch v0.1.3 https://github.com/DataDog/pg_tracing.git /pg_tracing \
+    && make -C /pg_tracing install PG_CFLAGS=""
+
+FROM postgres:16
+
+RUN apt-get update && apt-get install -y --no-install-recommends libcurl4 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /usr/lib/postgresql/16/lib/pg_tracing.so /usr/lib/postgresql/16/lib/
+COPY --from=build /usr/share/postgresql/16/extension/pg_tracing* /usr/share/postgresql/16/extension/

@@ -92,6 +92,18 @@ gRPC `NOT_FOUND` and cascading to cart/checkout. `accounting` is fine on the **s
 The `libpq` path stays as the fallback (bundled DB, no accounts). See also the transaction-pooler
 [caveat](https://supabase.com/docs/guides/database/connecting-to-postgres).
 
+### Postgres server-side tracing (pg_tracing)
+
+Supabase can't run [pg_tracing](https://github.com/DataDog/pg_tracing) today (not in the extension
+catalog), so the demo dogfoods it on the deployed `astronomy-db` instead: the opt-in
+`compose.pg-tracing.yaml` swaps it to a PG 16 image with the extension, and Postgres itself emits
+parse/plan/execute spans over OTLP to the collector, stitched into the app trace via the
+SQLCommenter `traceparent` both direct-SQL services already send. The **`supabaseDatabaseBackend`**
+flag flips product-catalog reads and accounting order writes between Supabase (`supabase`) and that
+traced Postgres (`astronomy_pg`) at runtime, so the two experiences can be compared live in Jaeger.
+Details: [supa-db-backend.md](supa-db-backend.md); decisions and learnings for the Supabase catalog
+evaluation: `supa-tracing-initiative/04-postgres-pg-tracing/dogfood-decisions.md`.
+
 ## Auth
 
 | Service | Language | How it connects | What it does |
@@ -128,7 +140,9 @@ for a compose profile that skips them):
   `/images/products/…` (routed by `src/frontend-proxy/envoy.tmpl.yaml` to `image-provider:8081`),
   so both image sources run in parallel. To drop it: route those through `getProductImageUrl()`,
   make the Playwright predicate Supabase-aware, and add a compose profile.
-- **`astronomy-db`** (bundled Postgres) — redundant when the Supabase connection strings are set.
+- **`astronomy-db`** (bundled Postgres) — no longer redundant: with `compose.pg-tracing.yaml` it
+  runs pg_tracing and serves as the `astronomy_pg` variant of the `supabaseDatabaseBackend` flag
+  (see the Postgres section).
 
 ## PostgREST (data API)
 
@@ -214,6 +228,7 @@ This integration layers a few things on top of that baseline:
 | Supabase infra metrics | `src/prometheus/supabase/`, Grafana → **Demo → Supabase Project** | Prometheus scrapes the project's privileged metrics endpoint into the demo's own Grafana (opt-in include `supabase.yaml`, gitignored — holds the `service_role` key, see `.example`) |
 | Supabase logs (edge / postgres / function) | Supabase dashboard, `query_logs` MCP | Where the propagated `trace_id` lands — see below |
 | Sentry (opt-in error monitoring) | native SDKs per service + a collector fork | one *additional* destination; details below |
+| Postgres server-side spans (pg_tracing) | `compose.pg-tracing.yaml`, Jaeger service `astronomy-db` | astronomy-db emits parse/plan/execute spans via OTLP; flipped against Supabase with the `supabaseDatabaseBackend` flag — see [supa-db-backend.md](supa-db-backend.md) |
 | Supabase log drains | — | **TODO** (paid-plan feature) |
 
 **Sentry is one opt-in destination, not the headline.** When a DSN is set, each service's native

@@ -33,12 +33,12 @@ ssh root@46.225.122.52
 # Start
 cd /root/opentelemetry-demo
 docker compose --env-file .env --env-file .env.local \
-  -f compose.yaml -f compose.full.yaml -f compose.observability.yaml -f compose.override.yaml \
+  -f compose.yaml -f compose.full.yaml -f compose.observability.yaml -f compose.pg-tracing.yaml -f compose.override.yaml \
   up -d
 
 # Stop
 docker compose \
-  -f compose.yaml -f compose.full.yaml -f compose.observability.yaml -f compose.override.yaml \
+  -f compose.yaml -f compose.full.yaml -f compose.observability.yaml -f compose.pg-tracing.yaml -f compose.override.yaml \
   down
 
 # Status
@@ -63,10 +63,17 @@ Snapshot storage: ~$0.012/GB/month (~$2/month while paused).
 - OpenSearch heap capped at 512 MB (fits 8 GB server)
 - Grafana and Jaeger bound to fixed host ports (3000, 16686)
 
+`compose.pg-tracing.yaml` (committed): astronomy-db runs PG 16 with the pg_tracing
+extension instead of the default POSTGRES_IMAGE — the image is built locally
+(`docker compose ... build astronomy-db` before first start). See
+supa-tracing-initiative/04-postgres-pg-tracing/dogfood-decisions.md.
+
 `/root/opentelemetry-demo/.env.local`:
 - Supabase credentials
 - `GRAFANA_PORT=3000:3000` — fixed host port binding
 - `JAEGER_UI_PORT=16686:16686` — fixed host port binding
 - `PUBLIC_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://46.225.122.52:8080/otlp-http/v1/traces` — browser-side traces use server IP not localhost
+- `PRODUCT_CATALOG_ASTRONOMY_DB_CONNECTION_STRING=postgres://astronomy_user:astronomy_password@astronomy-db/astronomy_db?sslmode=disable` — secondary astronomy-db DSN for the supabaseDatabaseBackend flag
+- `ACCOUNTING_ASTRONOMY_DB_CONNECTION_STRING=Host=astronomy-db;Username=astronomy_user;Password=astronomy_password;Database=astronomy_db` — same, Npgsql keyword form
 
 Credentials in `.env.local` — not committed.

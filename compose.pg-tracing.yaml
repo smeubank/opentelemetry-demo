@@ -1,0 +1,47 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+# Opt-in pg_tracing layer: swaps astronomy-db to a PG 16 image with the
+# DataDog pg_tracing extension (pg_tracing supports PG 14-16 only; the default
+# demo stays on POSTGRES_IMAGE). Postgres emits server-side spans and pushes
+# them straight to the collector over OTLP HTTP. Queries arriving with a
+# SQLCommenter traceparent are always traced (caller_sample_rate=1) and stitch
+# into the calling app's trace; standalone traffic is sampled at 5%.
+# See supa-tracing-initiative/04-postgres-pg-tracing/dogfood-decisions.md.
+#
+# Usage:
+#   docker compose -f compose.yaml -f compose.pg-tracing.yaml up
+
+services:
+  astronomy-db:
+    image: ${IMAGE_NAME}:${IMAGE_VERSION}-postgres-pg-tracing
+    build:
+      context: ./src/postgresql
+      dockerfile: Dockerfile.pg-tracing
+    deploy:
+      resources:
+        limits:
+          memory: 160M
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements,pg_tracing
+      - -c
+      - compute_query_id=on
+      - -c
+      - pg_tracing.otel_endpoint=http://${OTEL_COLLECTOR_HOST}:${OTEL_COLLECTOR_PORT_HTTP}/v1/traces
+      - -c
+      - pg_tracing.otel_service_name=astronomy-db
+      - -c
+      - pg_tracing.otel_naptime=5000
+      - -c
+      - pg_tracing.sample_rate=0.05
+      - -c
+      - pg_tracing.caller_sample_rate=1
+      - -c
+      - pg_tracing.max_span=5000
+      - -c
+      - pg_tracing.track=all
+    volumes:
+      - ./src/postgresql/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./src/postgresql/init-pg-tracing.sql:/docker-entrypoint-initdb.d/zz-pg-tracing.sql
