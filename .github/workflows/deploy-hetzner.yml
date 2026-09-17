@@ -219,18 +219,7 @@ jobs:
           docker pull ${IMAGE_REPO}:latest-accounting
           docker pull ${IMAGE_REPO}:latest-fraud-detection
           docker pull ${IMAGE_REPO}:latest-load-generator
-          python3 - <<'PYEOF'
-import yaml
-path = 'compose.override.yaml'
-try:
-    with open(path) as f:
-        cfg = yaml.safe_load(f) or {}
-except FileNotFoundError:
-    cfg = {}
-cfg.setdefault('services', {}).setdefault('load-generator', {})['image'] = '${IMAGE_REPO}:latest-load-generator'
-with open(path, 'w') as f:
-    yaml.dump(cfg, f, default_flow_style=False)
-PYEOF
+          python3 -c "import yaml,os; path='compose.override.yaml'; cfg=(yaml.safe_load(open(path)) or {}) if os.path.exists(path) else {}; cfg.setdefault('services',{}).setdefault('load-generator',{})['image']='${IMAGE_REPO}:latest-load-generator'; open(path,'w').write(yaml.dump(cfg,default_flow_style=False))"
           docker compose --env-file .env --env-file .env.local \\
             -f compose.yaml -f compose.full.yaml -f compose.observability.yaml -f compose.pgmq.yaml -f compose.override.yaml \\
             up -d --no-deps product-catalog frontend checkout accounting fraud-detection load-generator
