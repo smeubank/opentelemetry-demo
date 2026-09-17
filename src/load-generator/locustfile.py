@@ -392,8 +392,8 @@ supabase_apikey = os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip()
 if supabase_http_url and supabase_apikey:
     import requests
 
-    _SERVICE_BY_FLAG = {2: "auth", 3: "storage", 4: "edge_function", 5: "all"}
-    _ALL_SERVICES = ["auth", "storage", "edge_function"]
+    _SERVICE_BY_FLAG = {1: "data_api", 2: "auth", 3: "storage", 4: "edge_function", 5: "all"}
+    _ALL_SERVICES = ["data_api", "auth", "storage", "edge_function"]
 
     class SupabaseServiceErrorUser(User):
         fixed_count = 2  # a couple of greenlets are enough to clear the >=50 req / 5-min window
@@ -407,6 +407,10 @@ if supabase_http_url and supabase_apikey:
 
         def _hit(self, service):
             # Each request is expected to produce a 5xx from the named Supabase service.
+            if service == "data_api":
+                # Calls the health_check_boom() RPC which raises XX000 → PostgREST 500.
+                # Most reliable trigger for log_data_api_error_rate_high (~6 min window).
+                return self.session.post(f"{supabase_http_url}/rest/v1/rpc/health_check_boom", json={}, timeout=10)
             if service == "edge_function":
                 # Drives volume against the real payment-charge edge function so its
                 # log_edge_function_error_rate_high check fires; injectFailure forces a 500.

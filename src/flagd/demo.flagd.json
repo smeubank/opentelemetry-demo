@@ -207,11 +207,12 @@
     },
     "supabaseServiceErrors": {
       "defaultVariant": "off",
-      "description": "[Supabase] Drive error volume against a Supabase service to trigger its log_*_error_rate_high health check. edge_function hammers the payment-charge function (5xx directly); auth/storage only 5xx when the DB is also exhausted (see supabaseConnectionExhaustion).",
+      "description": "[Supabase] Drive error volume against a Supabase service to trigger its log_*_error_rate_high health check. data_api calls health_check_boom() RPC (most reliable, fires in ~6 min); edge_function hammers payment-charge with injectFailure; auth/storage are best-effort 4xx only.",
       "state": "ENABLED",
       "variants": {
         "all": 5,
         "auth": 2,
+        "data_api": 1,
         "edge_function": 4,
         "off": 0,
         "storage": 3
