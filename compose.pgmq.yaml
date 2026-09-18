@@ -14,6 +14,7 @@ services:
     command:
       - "--config=/etc/otelcol-config.yml"
       - "--config=/etc/otelcol-config-full.yml"
+      - "--config=/etc/otelcol-config-observability.yml"
       - "--config=/etc/otelcol-config-extras.yml"
       - "--config=/etc/otelcol-config-pgmq.yml"
       - "--feature-gates=service.profilesSupport"
