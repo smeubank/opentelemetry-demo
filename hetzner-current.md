@@ -109,21 +109,30 @@ Credentials in `.env.local` — not committed.
 
 ## Claude Code / AI-native interface
 
-`.mcp.json` is committed and configures the Supabase MCP server for this project
-(`poevzlmscrydhaytrwjx`, features: database · debugging · development · functions · branching · storage).
+The Supabase MCP is a hosted HTTP server — no need to clone this repo. Anyone
+with project access can point their own Claude Code at it directly.
 
-**First-run setup (one time per machine):**
+**Setup (one time, in any project or globally):**
 
-1. Open the repo in Claude Code.
-2. Claude Code detects `.mcp.json` and prompts to enable the Supabase server — approve it.
-3. Browser OAuth flow opens — log in with a Supabase account that has access to the project.
-4. Done. Claude Code saves the approval in your local `.claude/settings.local.json` (gitignored).
+Add to your `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "supabase": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=poevzlmscrydhaytrwjx&features=docs%2Caccount%2Cdatabase%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching%2Cstorage"
+    }
+  }
+}
+```
+
+Then open Claude Code — it will prompt for OAuth. Log in with a Supabase account
+that has access to project `poevzlmscrydhaytrwjx`. Done.
 
 **What this unlocks against the deployed stack:**
 
-- Query and introspect `astronomy_db` (the PG 16 + pg_tracing database) directly in conversation
+- Query and introspect `astronomy_db` (PG 16 + pg_tracing) directly in conversation
 - Fetch Supabase project logs to correlate with Jaeger traces and Sentry span data
-- Use the debugging and development tools to inspect edge functions, storage, and connection pooler state
-- Ask questions like "why are pg_tracing spans not appearing in the collector?" and Claude can query the DB, check logs, and read the schema without leaving the chat
-
-The MCP server requires OAuth — the project ref in `.mcp.json` grants no access on its own.
+- Inspect edge functions, storage, and connection pooler state
+- Ask "why are pg_tracing spans missing from the collector?" and Claude can query the DB, check logs, and read the schema without leaving the chat
