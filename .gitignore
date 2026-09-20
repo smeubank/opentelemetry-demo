@@ -69,8 +69,6 @@ src/shipping/target/
 src/prometheus/supabase/*.yaml
 !src/prometheus/supabase/*.yaml.example
 
-# Local MCP server config (contains project ref)
-.mcp.json
 
 *.tsbuildinfo
 

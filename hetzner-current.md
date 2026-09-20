@@ -104,3 +104,26 @@ Deploy notes (from the 2026-09-15 pg_tracing rollout):
 - `ACCOUNTING_ASTRONOMY_DB_CONNECTION_STRING=Host=astronomy-db;Username=astronomy_user;Password=astronomy_password;Database=astronomy_db` — same, Npgsql keyword form
 
 Credentials in `.env.local` — not committed.
+
+---
+
+## Claude Code / AI-native interface
+
+`.mcp.json` is committed and configures the Supabase MCP server for this project
+(`poevzlmscrydhaytrwjx`, features: database · debugging · development · functions · branching · storage).
+
+**First-run setup (one time per machine):**
+
+1. Open the repo in Claude Code.
+2. Claude Code detects `.mcp.json` and prompts to enable the Supabase server — approve it.
+3. Browser OAuth flow opens — log in with a Supabase account that has access to the project.
+4. Done. Claude Code saves the approval in your local `.claude/settings.local.json` (gitignored).
+
+**What this unlocks against the deployed stack:**
+
+- Query and introspect `astronomy_db` (the PG 16 + pg_tracing database) directly in conversation
+- Fetch Supabase project logs to correlate with Jaeger traces and Sentry span data
+- Use the debugging and development tools to inspect edge functions, storage, and connection pooler state
+- Ask questions like "why are pg_tracing spans not appearing in the collector?" and Claude can query the DB, check logs, and read the schema without leaving the chat
+
+The MCP server requires OAuth — the project ref in `.mcp.json` grants no access on its own.
