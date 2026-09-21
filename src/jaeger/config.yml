@@ -36,6 +36,9 @@ extensions:
     base_path: /jaeger/ui
     ui:
       config_file: /etc/jaeger/ui-config.json
+    ai:
+      mcp:
+        enabled: true
   jaeger_storage:
     backends:
       memory_backend:

@@ -95,6 +95,12 @@ static_resources:
                             timeout: 0s
                             upgrade_configs:
                               - upgrade_type: websocket
+                        - match: { prefix: "/mcp" }
+                          route:
+                            cluster: mcp
+                            timeout: 0s
+                            upgrade_configs:
+                              - upgrade_type: websocket
                         - match: { prefix: "/" }  # Default/catch-all route - keep last since prefix:"/" matches everything
                           route: { cluster: frontend }
                 http_filters:
@@ -317,6 +323,19 @@ static_resources:
                     socket_address:
                       address: ${TELEMETRY_DOCS_HOST}
                       port_value: ${TELEMETRY_DOCS_PORT}
+    - name: mcp
+      type: STRICT_DNS
+      lb_policy: ROUND_ROBIN
+      typed_dns_resolver_config: *dns_resolver
+      load_assignment:
+        cluster_name: mcp
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: ${MCP_ENDPOINT}
+                      port_value: ${MCP_PORT}
     - name: chatbot
       type: STRICT_DNS
       lb_policy: ROUND_ROBIN

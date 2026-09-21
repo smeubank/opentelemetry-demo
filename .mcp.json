@@ -3,6 +3,14 @@
     "supabase": {
       "type": "http",
       "url": "https://mcp.supabase.com/mcp?project_ref=poevzlmscrydhaytrwjx&features=docs%2Caccount%2Cdatabase%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching%2Cstorage"
+    },
+    "otel-shop": {
+      "type": "http",
+      "url": "http://46.225.122.52:8080/mcp"
+    },
+    "jaeger": {
+      "type": "http",
+      "url": "http://46.225.122.52:8080/jaeger/ui/api/ai/mcp/"
     }
   }
 }

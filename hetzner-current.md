@@ -36,9 +36,14 @@ docker compose --env-file .env --env-file .env.local \
   -f compose.yaml -f compose.full.yaml -f compose.observability.yaml -f compose.pg-tracing.yaml -f compose.override.yaml \
   up -d
 
+# Start the shop MCP service (separate step — avoids pulling in the agent which needs LLM keys)
+docker compose --env-file .env --env-file .env.local \
+  -f compose.yaml -f compose.agent.yaml \
+  up -d mcp
+
 # Stop
 docker compose \
-  -f compose.yaml -f compose.full.yaml -f compose.observability.yaml -f compose.pg-tracing.yaml -f compose.override.yaml \
+  -f compose.yaml -f compose.full.yaml -f compose.observability.yaml -f compose.pg-tracing.yaml -f compose.override.yaml -f compose.agent.yaml \
   down
 
 # Status
@@ -107,32 +112,33 @@ Credentials in `.env.local` — not committed.
 
 ---
 
-## Claude Code / AI-native interface
+## MCP servers (AI-native interface)
 
-The Supabase MCP is a hosted HTTP server — no need to clone this repo. Anyone
-with project access can point their own Claude Code at it directly.
+Two MCP servers are running on this deployment and exposed through Envoy. No
+auth required — they talk to the public shop and the local Jaeger instance.
 
-**Setup (one time, in any project or globally):**
-
-Add to your `.mcp.json`:
+Add to your `.mcp.json` (no repo clone needed):
 
 ```json
 {
   "mcpServers": {
-    "supabase": {
+    "otel-shop": {
       "type": "http",
-      "url": "https://mcp.supabase.com/mcp?project_ref=poevzlmscrydhaytrwjx&features=docs%2Caccount%2Cdatabase%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching%2Cstorage"
+      "url": "http://46.225.122.52:8080/mcp"
+    },
+    "jaeger": {
+      "type": "http",
+      "url": "http://46.225.122.52:8080/jaeger/ui/api/ai/mcp/"
     }
   }
 }
 ```
 
-Then open Claude Code — it will prompt for OAuth. Log in with a Supabase account
-that has access to project `poevzlmscrydhaytrwjx`. Done.
+**`otel-shop`** — shop operations as MCP tools: `list_products`, `add_to_cart`,
+`checkout`, `get_cart`, `get_recommendations`, `get_ads`, `get_shipping_quote`,
+`get_supported_currencies`, `empty_cart`, `get_product`.
 
-**What this unlocks against the deployed stack:**
-
-- Query and introspect `astronomy_db` (PG 16 + pg_tracing) directly in conversation
-- Fetch Supabase project logs to correlate with Jaeger traces and Sentry span data
-- Inspect edge functions, storage, and connection pooler state
-- Ask "why are pg_tracing spans missing from the collector?" and Claude can query the DB, check logs, and read the schema without leaving the chat
+**`jaeger`** — trace query tools: `get_services`, `get_span_names`,
+`search_traces`, `get_trace_topology`, `get_critical_path`, `get_span_details`,
+`get_trace_errors`, `get_service_dependencies`. Uses progressive disclosure —
+search first, drill down by span ID.
