@@ -37,8 +37,10 @@ docker compose --env-file .env --env-file .env.local \
   up -d
 
 # Start the shop MCP service (separate step — avoids pulling in the agent which needs LLM keys)
+# Note: compose.observability.yaml is required because chatbot (also in compose.agent.yaml)
+# depends on opamp-server which is defined there.
 docker compose --env-file .env --env-file .env.local \
-  -f compose.yaml -f compose.agent.yaml \
+  -f compose.yaml -f compose.observability.yaml -f compose.agent.yaml \
   up -d mcp
 
 # Stop
@@ -72,6 +74,21 @@ Snapshot storage: ~$0.012/GB/month (~$2/month while paused).
 extension instead of the default POSTGRES_IMAGE — the image is built locally
 (`docker compose ... build astronomy-db` before first start). See
 supa-tracing-initiative/04-postgres-pg-tracing/dogfood-decisions.md.
+
+Deploy notes (from the 2026-09-21 MCP rollout):
+
+- Jaeger MCP requires **2.21.0+** — the `ai.mcp` config key doesn't exist in 2.19.0
+  and crashes Jaeger on startup. Bumped `JAEGERTRACING_IMAGE` in `.env`.
+- `docker compose restart <service>` does **not** pick up env var changes — it reuses
+  the container's original env. Use `up -d <service>` to recreate with the new env.
+- `compose.agent.yaml` includes `chatbot` which depends on `opamp-server` (from
+  `compose.observability.yaml`). Running `up -d mcp` with only compose.yaml +
+  compose.agent.yaml fails; always include compose.observability.yaml.
+- After a failed `up -d`, the mcp container may exist in "Created" state —
+  `docker start mcp` brings it up without the dependency resolution overhead.
+- The Envoy `/mcp` cluster uses `MCP_ENDPOINT` and `MCP_PORT` from `.env` — these
+  must be in the `frontend-proxy` environment block in `compose.yaml` (added in
+  this rollout) or Envoy fails validation and crash-loops on start.
 
 Deploy notes (from the 2026-09-15 pg_tracing rollout):
 
