@@ -211,6 +211,10 @@ jobs:
           set -e
           cd ${DEPLOY_DIR}
           git fetch origin supa-otel-shop
+          # Stop flagd-ui before the reset so it can't write its cached flag state back over
+          # the file (flagd-ui persists in-memory flags to demo.flagd.json). It is recreated
+          # from the freshly reset file at the end, so committed flag changes actually deploy.
+          docker stop flagd-ui || true
           git reset --hard origin/supa-otel-shop
           echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           docker pull ${IMAGE_REPO}:latest-product-catalog
@@ -223,6 +227,11 @@ jobs:
           docker compose --env-file .env --env-file .env.local \\
             -f compose.yaml -f compose.full.yaml -f compose.observability.yaml -f compose.pgmq.yaml -f compose.override.yaml \\
             up -d --no-deps product-catalog frontend checkout accounting fraud-detection load-generator
+          # Reload feature flags from the reset file: flagd re-reads it, flagd-ui starts clean
+          # (this resets runtime UI flag edits to the committed defaults on every deploy).
+          docker compose --env-file .env --env-file .env.local \\
+            -f compose.yaml -f compose.full.yaml -f compose.observability.yaml -f compose.pgmq.yaml -f compose.override.yaml \\
+            up -d --no-deps --force-recreate flagd flagd-ui
           SCRIPT
 
           ssh -i /tmp/hetzner_key \
