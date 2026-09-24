@@ -205,9 +205,29 @@
         "off": ""
       }
     },
+    "supabaseDiskGrowth": {
+      "defaultVariant": "off",
+      "description": "[Supabase] Product-view events to append per load-generator tick (0=off) via record_product_views() to force fast disk growth on the append-only public.product_view_events table (no retention). The pg_cron snapshot job records relation sizes into public.table_size_history; the observability routine (STEP 0.6) reports any relation growing >=10% in a short window. Requires SUPABASE_URL + SUPABASE_PUBLISHABLE_KEY. See supademo-readme.md.",
+      "state": "ENABLED",
+      "variants": {
+        "fast": 5000,
+        "off": 0,
+        "slow": 500
+      }
+    },
+    "supabaseDataApiError": {
+      "defaultVariant": "off",
+      "description": "[Supabase] Data-API fault mode: which real Postgres error the load generator drives through PostgREST when supabaseServiceErrors selects data_api/all. 'off' keeps the health_check_boom() 500 (drives log_data_api_error_rate_high); 'relation_missing' calls get_product_analytics() -> references a dropped table -> 42P01 -> 404 (migration drift); 'permission_denied' calls get_order_history() -> reads a table the API role lost access to -> 42501 -> 403 (grant regression). Each real-error mode emits a genuine SQLSTATE in postgres_logs correlated by trace_id to the PostgREST 4xx in edge_logs. See supademo-readme.md.",
+      "state": "ENABLED",
+      "variants": {
+        "off": "off",
+        "permission_denied": "permission_denied",
+        "relation_missing": "relation_missing"
+      }
+    },
     "supabaseServiceErrors": {
       "defaultVariant": "off",
-      "description": "[Supabase] Drive error volume against a Supabase service to trigger its log_*_error_rate_high health check. data_api calls health_check_boom() RPC (most reliable, fires in ~6 min); edge_function hammers payment-charge with injectFailure; auth/storage are best-effort 4xx only.",
+      "description": "[Supabase] Drive error volume against a Supabase service to trigger its log_*_error_rate_high health check. data_api calls health_check_boom() RPC by default (most reliable 5xx, fires in ~6 min) unless supabaseDataApiError selects a real-Postgres-error mode; edge_function hammers payment-charge with injectFailure; auth/storage are best-effort 4xx only.",
       "state": "ENABLED",
       "variants": {
         "all": 5,

@@ -84,6 +84,10 @@ def get_flagd_value(FlagName):
     client = api.get_client()
     return client.get_integer_value(FlagName, 0)
 
+def get_flagd_string(FlagName, default="off"):
+    client = api.get_client()
+    return client.get_string_value(FlagName, default)
+
 categories = [
     "binoculars",
     "telescopes",
@@ -408,8 +412,15 @@ if supabase_http_url and supabase_apikey:
         def _hit(self, service):
             # Each request is expected to produce a 5xx from the named Supabase service.
             if service == "data_api":
-                # Calls the health_check_boom() RPC which raises XX000 → PostgREST 500.
-                # Most reliable trigger for log_data_api_error_rate_high (~6 min window).
+                # supabaseDataApiError picks the Postgres error PostgREST returns: 'off' keeps
+                # health_check_boom (XX000 → 500, drives log_data_api_error_rate_high);
+                # 'relation_missing' → get_product_analytics → 42P01 → 404;
+                # 'permission_denied' → get_order_history → 42501 → 403.
+                mode = get_flagd_string("supabaseDataApiError", "off")
+                if mode == "relation_missing":
+                    return self.session.post(f"{supabase_http_url}/rest/v1/rpc/get_product_analytics", json={}, timeout=10)
+                if mode == "permission_denied":
+                    return self.session.post(f"{supabase_http_url}/rest/v1/rpc/get_order_history", json={}, timeout=10)
                 return self.session.post(f"{supabase_http_url}/rest/v1/rpc/health_check_boom", json={}, timeout=10)
             if service == "edge_function":
                 # Drives volume against the real payment-charge edge function so its
@@ -440,3 +451,16 @@ if supabase_http_url and supabase_apikey:
                             statuses.append(-1)
                             logging.warning(f"supabase {service} request error: {e}")
                     logging.info(f"supabase {service} error-load statuses: {statuses}")
+
+        @task
+        def grow_disk(self):
+            # Appends product-view events via record_product_views() while supabaseDiskGrowth > 0
+            # (an append-only table with no retention), so the pg_cron snapshot job records
+            # >=10% relative growth for the observability routine to flag.
+            n = get_flagd_value("supabaseDiskGrowth")
+            if n and n > 0:
+                with self.tracer.start_as_current_span("supabase_disk_growth", context=context.get_current(), attributes={"demo.supabase.grow_rows": n}):
+                    try:
+                        self.session.post(f"{supabase_http_url}/rest/v1/rpc/record_product_views", json={"n": n}, timeout=15)
+                    except Exception as e:
+                        logging.warning(f"record_product_views error: {e}")
